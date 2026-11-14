@@ -1,0 +1,22 @@
+{
+  "name": "notesgood",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Handwriting note-taking app: stylus ink, PDF annotation with a writable side margin, LaTeX.",
+  "scripts": {
+    "dev": "node scripts/build.mjs --serve",
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/serve.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "katex": "^0.16.47",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "6.2.108"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^6.0.3"
+  }
+}

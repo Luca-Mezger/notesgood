@@ -1,0 +1,94 @@
+# Builds the app on every push to main and deploys it:
+#   1. to GitHub Pages (the public copy; no setup needed beyond enabling Pages → Source: GitHub Actions)
+#   2. to your Hostinger site over FTP, together with the sync endpoint, when these repository secrets exist:
+#        FTP_HOST      e.g. ftp.your-domain.com   (Hostinger hPanel → Files → FTP Accounts)
+#        FTP_USER      the FTP username
+#        FTP_PASSWORD  the FTP password
+#        FTP_DIR       target folder, e.g. /public_html/notesgood/   (must end with /)
+#        SYNC_KEY      the secret that devices enter under Sync → Secret
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: |
+            dist
+            server/sync.php
+
+  pages:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  hostinger:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      FTP_HOST: ${{ secrets.FTP_HOST }}
+    steps:
+      - name: Skip when no FTP secrets are configured
+        if: env.FTP_HOST == ''
+        run: echo "FTP_HOST secret not set; skipping the Hostinger deploy."
+      - uses: actions/download-artifact@v4
+        if: env.FTP_HOST != ''
+        with:
+          name: site
+          path: site
+      - name: Assemble upload folder
+        if: env.FTP_HOST != ''
+        run: |
+          mkdir -p upload
+          cp -r site/dist/. upload/
+          cp site/server/sync.php upload/sync.php
+          printf '%s\n' "${{ secrets.SYNC_KEY }}" > upload/sync-key.txt
+          # Keep the secret and the sync data private, even though they sit inside the web root.
+          cat > upload/.htaccess <<'EOF'
+          <Files "sync-key.txt">
+            Require all denied
+          </Files>
+          EOF
+      - name: Upload to Hostinger
+        if: env.FTP_HOST != ''
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USER }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          local-dir: upload/
+          server-dir: ${{ secrets.FTP_DIR }}
+          exclude: |
+            **/sync-data/**
