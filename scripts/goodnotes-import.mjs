@@ -1,11 +1,35 @@
 // Only the local desktop app can access matching Goodnotes PDF exports. Never expose this on hosting.
-import { open, copyFile, mkdtemp, rm, stat } from 'node:fs/promises';
+import { open, copyFile, mkdtemp, rm, stat, readdir, realpath } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, basename, dirname, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 
 const downloadsDir = join(homedir(), 'Downloads');
 const goodnotesHistory = join(homedir(), '.local/share/nixos-fleet/webapps/goodnotes/Default/History');
+const goodnotesInbox = join(homedir(), '.local/share/notesgood/goodnotes-inbox');
+
+// Dedicated private migration exports retain their source folder, including repeated filenames.
+async function inboxFiles(root, prefix = '', depth = 0) {
+  if (depth > 20) return [];
+  let entries;
+  try { entries = await readdir(join(root, prefix), { withFileTypes: true }); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  const files = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith('.')) continue;
+    const path = prefix ? prefix + '/' + entry.name : entry.name;
+    if (entry.isDirectory()) files.push(...await inboxFiles(root, path, depth + 1));
+    else if (entry.isFile() && /\.pdf$/i.test(entry.name)) files.push({ id: 'inbox/' + path, name: entry.name, dir: prefix || 'Goodnotes', path: join(root, path) });
+  }
+  return files;
+}
+
+async function openInbox(root, path) {
+  const canonicalRoot = await realpath(root);
+  const canonicalPath = await realpath(path);
+  if (canonicalRoot !== resolve(root) || !canonicalPath.startsWith(canonicalRoot + '/') || canonicalPath !== resolve(path)) throw Object.assign(new Error('Invalid export path'), { code: 'ENOENT' });
+  return open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+}
 
 function goodnotesUrl(value) {
   try { return new URL((value || '').replace(/^blob:/, '')).hostname === 'web.goodnotes.com'; }
@@ -34,7 +58,7 @@ export async function exportNames(importDir = downloadsDir, historyFile = goodno
   } finally { db?.close(); await rm(temp, { recursive: true, force: true }); }
 }
 
-export async function handleGoodnotesImport(req, res, { importDir = downloadsDir, historyFile = goodnotesHistory } = {}) {
+export async function handleGoodnotesImport(req, res, { importDir = downloadsDir, historyFile = goodnotesHistory, inboxDir = goodnotesInbox } = {}) {
   const url = new URL(req.url, 'http://localhost');
   if (!url.pathname.startsWith('/api/goodnotes/')) return false;
   const address = req.socket.remoteAddress;
@@ -60,12 +84,27 @@ export async function handleGoodnotesImport(req, res, { importDir = downloadsDir
           if (info.isFile()) files.push({ name, size: info.size, lastModified: Math.trunc(info.mtimeMs) });
         } finally { await file.close(); }
       }
+      for (const { path, ...entry } of await inboxFiles(inboxDir)) {
+        const file = await openInbox(inboxDir, path);
+        try {
+          const info = await file.stat();
+          if (info.isFile()) files.push({ ...entry, size: info.size, lastModified: Math.trunc(info.mtimeMs) });
+        } finally { await file.close(); }
+      }
+      if (files.some((file) => file.id)) available = true;
       files.sort((a, b) => a.name.localeCompare(b.name));
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify({ files, available }));
     } else if (url.pathname === '/api/goodnotes/file') {
       const name = url.searchParams.get('name') || '';
-      if (name !== basename(name) || !(await exportNames(importDir, historyFile)).includes(name)) { res.writeHead(404).end(); return true; }
-      const file = await open(join(importDir, name), constants.O_RDONLY | constants.O_NOFOLLOW);
+      let file;
+      if (name.startsWith('inbox/')) {
+        const entry = (await inboxFiles(inboxDir)).find((entry) => entry.id === name);
+        if (!entry) { res.writeHead(404).end(); return true; }
+        file = await openInbox(inboxDir, entry.path);
+      } else {
+        if (name !== basename(name) || !(await exportNames(importDir, historyFile)).includes(name)) { res.writeHead(404).end(); return true; }
+        file = await open(join(importDir, name), constants.O_RDONLY | constants.O_NOFOLLOW);
+      }
       const info = await file.stat();
       if (!info.isFile()) { await file.close(); res.writeHead(404).end(); return true; }
       res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Length': info.size, 'Cache-Control': 'no-store' });

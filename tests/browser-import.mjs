@@ -11,7 +11,7 @@ import { handleGoodnotesImport } from '../scripts/goodnotes-import.mjs';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const temp = await mkdtemp(join(tmpdir(), 'notesgood-browser-import-'));
-const importDir = join(temp, 'Downloads'), historyFile = join(temp, 'History');
+const importDir = join(temp, 'Downloads'), historyFile = join(temp, 'History'), inboxDir = join(temp, 'inbox');
 await mkdir(importDir);
 const history = new DatabaseSync(historyFile);
 history.exec('CREATE TABLE downloads (target_path TEXT, tab_url TEXT, tab_referrer_url TEXT, state INTEGER)');
@@ -27,7 +27,7 @@ await addPdf('Renamed algebra.pdf', '', first);
 await writeFile(join(importDir, 'Unrelated.pdf'), first);
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm', '.woff2': 'font/woff2' };
 const server = createServer(async (req, res) => {
-  if (await handleGoodnotesImport(req, res, { importDir, historyFile })) return;
+  if (await handleGoodnotesImport(req, res, { importDir, historyFile, inboxDir })) return;
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
     const file = join(process.cwd(), 'dist', path === '/' ? 'index.html' : path);
@@ -81,6 +81,15 @@ try {
   await until("!document.querySelector('.modal-back') && document.querySelector('.toast')?.textContent.includes('already imported')");
   assert.equal(await evaluate("document.querySelectorAll('.card').length"), 3);
   console.log('PASS: visible Goodnotes import action imports immediately and detects existing content.');
+  await mkdir(join(inboxDir, 'Math'), { recursive: true });
+  await writeFile(join(inboxDir, 'Math', 'Algebra.pdf'), first);
+  await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Check now').click()");
+  await until("document.querySelector('.import-status')?.textContent.includes('1 already imported') && [...document.querySelectorAll('.chip')].some(e=>e.textContent.includes('Math'))");
+  assert.equal(await evaluate("document.querySelectorAll('.card').length"), 3);
+  await evaluate("[...document.querySelectorAll('.chip')].find(e=>e.textContent.includes('Math')).click()");
+  await until("document.querySelectorAll('.card').length===1");
+  assert((await evaluate("document.querySelector('.card').textContent")).includes('Algebra'));
+  console.log('PASS: private migration exports recover the original folder without duplicating an existing notebook.');
   const shot = await send('Page.captureScreenshot', { format: 'png' });
   await writeFile('/tmp/notesgood-import-check.png', Buffer.from(shot.data, 'base64'));
 } finally {

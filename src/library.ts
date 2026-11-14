@@ -199,18 +199,19 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
         const response = await fetch('api/goodnotes/exports', { headers: { 'X-Notesgood-Local': '1' } });
         if (response.ok) {
-          const { files, available } = await response.json() as { files: { name: string; size: number; lastModified: number }[]; available: boolean };
+          const { files, available } = await response.json() as { files: { id?: string; name: string; dir?: string; size: number; lastModified: number }[]; available: boolean };
           const seen = await db.meta<Record<string, string>>('goodnotes.localSeen') ?? {};
           for (const file of files) {
             const signature = `${file.size}:${file.lastModified}`;
-            if (seen[file.name] === signature) continue;
-            sources.push({ name: file.name, dir: 'Goodnotes', data: async () => {
-              const r = await fetch('api/goodnotes/file?name=' + encodeURIComponent(file.name), { headers: { 'X-Notesgood-Local': '1' } });
+            const id = file.id ?? file.name;
+            if (seen[id] === signature) continue;
+            sources.push({ name: file.name, dir: file.dir ?? 'Goodnotes', data: async () => {
+              const r = await fetch('api/goodnotes/file?name=' + encodeURIComponent(id), { headers: { 'X-Notesgood-Local': '1' } });
               if (!r.ok) throw new Error('Could not read export');
               return r.arrayBuffer();
-            }, onImported: async () => { seen[file.name] = signature; await db.putMeta('goodnotes.localSeen', seen); } });
+            }, onImported: async () => { seen[id] = signature; await db.putMeta('goodnotes.localSeen', seen); } });
           }
-          setImportStatus(!available ? 'Automatic pickup is unavailable right now. Use “From Goodnotes” to choose PDFs.' : sources.length ? `Found ${sources.length} new Goodnotes exports in Downloads.` : 'Waiting for PDF exports from Goodnotes. Save them to Downloads.');
+          setImportStatus(!available ? 'Automatic pickup is unavailable right now. Use “From Goodnotes” to choose PDFs.' : sources.length ? `Found ${sources.length} new Goodnotes exports.` : 'Waiting for PDF exports from Goodnotes. Save them to Downloads.');
         }
       }
       const handle = await db.meta<any>('goodnotes.watch');
@@ -503,7 +504,17 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       try {
         const data = await srcs[i].data();
         const hash = await pdfHash(data);
-        if (notebooks.some((nb) => nb.importHash === hash)) { duplicates++; await srcs[i].onImported?.(); continue; }
+        const existing = notebooks.find((nb) => nb.importHash === hash);
+        if (existing) {
+          const sourceFolder = folderOf(i);
+          if (sourceFolder && sourceFolder !== 'Goodnotes' && (!existing.folder || existing.folder === 'Goodnotes')) {
+            existing.folder = sourceFolder;
+            existing.updated = Date.now();
+            await db.putNotebook(existing);
+            if (!folders.includes(sourceFolder)) { folders.push(sourceFolder); await db.putMeta('folders', folders); }
+          }
+          duplicates++; await srcs[i].onImported?.(); continue;
+        }
         const sizes = await pdfPageSizes(data);
         if (!sizes.length) throw new Error('PDF has no pages');
         const folder = folderOf(i) || currentFolder();

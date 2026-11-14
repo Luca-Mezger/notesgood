@@ -9,7 +9,7 @@ import { exportNames, handleGoodnotesImport } from '../scripts/goodnotes-import.
 
 test('automatic pickup uses actual Goodnotes downloads and blocks unrelated files and other origins', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'notesgood-test-'));
-  const importDir = join(temp, 'Downloads'), historyFile = join(temp, 'History');
+  const importDir = join(temp, 'Downloads'), historyFile = join(temp, 'History'), inboxDir = join(temp, 'inbox');
   await mkdir(importDir);
   const db = new DatabaseSync(historyFile);
   db.exec('CREATE TABLE downloads (target_path TEXT, tab_url TEXT, tab_referrer_url TEXT, state INTEGER)');
@@ -26,7 +26,7 @@ test('automatic pickup uses actual Goodnotes downloads and blocks unrelated file
   insert.run(join(importDir, 'Link.pdf'), 'https://web.goodnotes.com/', '', 1);
   insert.run(join(temp, 'Outside.pdf'), 'https://web.goodnotes.com/', '', 1);
   db.close();
-  const server = createServer((req, res) => { handleGoodnotesImport(req, res, { importDir, historyFile }).then((handled) => { if (!handled) res.writeHead(404).end(); }); });
+  const server = createServer((req, res) => { handleGoodnotesImport(req, res, { importDir, historyFile, inboxDir }).then((handled) => { if (!handled) res.writeHead(404).end(); }); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = 'http://127.0.0.1:' + server.address().port;
   const headers = { 'X-Notesgood-Local': '1' };
@@ -47,5 +47,22 @@ test('automatic pickup uses actual Goodnotes downloads and blocks unrelated file
     assert.equal((await fetch(base + '/api/goodnotes/file?name=Unrelated.pdf', { headers })).status, 404);
     assert.equal((await fetch(base + '/api/goodnotes/file?name=..%2FOutside.pdf', { headers })).status, 404);
     assert.notEqual((await fetch(base + '/api/goodnotes/file?name=Link.pdf', { headers })).status, 200);
+    for (const folder of ['Math', 'Programming']) {
+      await mkdir(join(inboxDir, folder), { recursive: true });
+      await writeFile(join(inboxDir, folder, 'Lecture.pdf'), '%PDF-' + folder);
+    }
+    await symlink(join(temp, 'Outside.pdf'), join(inboxDir, 'Math', 'Link.pdf'));
+    await symlink(importDir, join(inboxDir, 'Linked-folder'));
+    const inbox = (await (await fetch(base + '/api/goodnotes/exports', { headers })).json()).files.filter((f) => f.id);
+    assert.deepEqual(inbox.map((f) => [f.id, f.dir]).sort(), [['inbox/Math/Lecture.pdf', 'Math'], ['inbox/Programming/Lecture.pdf', 'Programming']]);
+    assert.equal(await (await fetch(base + '/api/goodnotes/file?name=inbox%2FMath%2FLecture.pdf', { headers })).text(), '%PDF-Math');
+    assert.equal((await fetch(base + '/api/goodnotes/file?name=inbox%2FMath%2FLink.pdf', { headers })).status, 404);
+    assert.equal((await fetch(base + '/api/goodnotes/file?name=inbox%2FLinked-folder%2FLecture.pdf', { headers })).status, 404);
+    assert.equal((await fetch(base + '/api/goodnotes/file?name=inbox%2F..%2FOutside.pdf', { headers })).status, 404);
+    // Migration exports remain available even when the original browser history is inaccessible.
+    await rm(historyFile);
+    const withoutHistory = await (await fetch(base + '/api/goodnotes/exports', { headers })).json();
+    assert.equal(withoutHistory.available, true);
+    assert.equal(withoutHistory.files.length, 2);
   } finally { await new Promise((resolve) => server.close(resolve)); await rm(temp, { recursive: true, force: true }); }
 });

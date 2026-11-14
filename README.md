@@ -179,6 +179,11 @@ the Fleet Goodnotes profile's download history; it imports only completed PDFs a
 from `web.goodnotes.com`. Unrelated downloads and PDFs merely prepared for Goodnotes are ignored.
 The original files are kept. A changed export becomes a new notebook, leaving existing annotations intact.
 
+Private migration exports can also be placed under `~/.local/share/notesgood/goodnotes-inbox/`, with a
+subfolder for each Goodnotes folder. The local app preserves those folders, including repeated filenames
+in different folders. An identical PDF previously imported into the generic Goodnotes folder is moved
+into its source folder without replacing its pages or annotations. Keep this inbox outside the repository.
+
 **For PDF backups:** choose **Watch a backup folder…** and select a local PDF backup folder. In supported
 browsers, Notesgood remembers that folder and checks for new or changed PDFs while the library is open.
 The browser may ask you to reconnect the folder after restarting. Goodnotes Auto Backup must use PDF
