@@ -202,10 +202,10 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
           const { files, available } = await response.json() as { files: { id?: string; name: string; dir?: string; size: number; lastModified: number }[]; available: boolean };
           const seen = await db.meta<Record<string, string>>('goodnotes.localSeen') ?? {};
           for (const file of files) {
-            const signature = `${file.size}:${file.lastModified}`;
+            const signature = `${file.size}:${file.lastModified}${file.id ? ':source-v1' : ''}`;
             const id = file.id ?? file.name;
             if (seen[id] === signature) continue;
-            sources.push({ name: file.name, dir: file.dir ?? 'Goodnotes', data: async () => {
+            sources.push({ name: file.name, dir: file.dir ?? 'Goodnotes', sourceId: file.id, data: async () => {
               const r = await fetch('api/goodnotes/file?name=' + encodeURIComponent(id), { headers: { 'X-Notesgood-Local': '1' } });
               if (!r.ok) throw new Error('Could not read export');
               return r.arrayBuffer();
@@ -437,12 +437,12 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
     return { margin, marginTpl, title: title?.value.trim() ?? '' };
   }
 
-  async function createPdfNotebook(data: ArrayBuffer, sizes: [number, number][], title: string, folder: string, margin: number, marginTpl: Tpl, hash?: string): Promise<Notebook> {
+  async function createPdfNotebook(data: ArrayBuffer, sizes: [number, number][], title: string, folder: string, margin: number, marginTpl: Tpl, hash?: string, sourceId?: string): Promise<Notebook> {
     const now = Date.now();
     const blobId = uid();
     const nb: Notebook = {
       id: uid(), title: title || 'Imported PDF', folder, fav: false,
-      created: now, updated: now, pages: [], margin, marginTpl, tpl: 'blank', paper: PAPER_COLORS.white, importHash: hash,
+      created: now, updated: now, pages: [], margin, marginTpl, tpl: 'blank', paper: PAPER_COLORS.white, importHash: hash, importSourceId: sourceId,
     };
     const pages: Page[] = sizes.map(([w, hh], i) => ({ id: uid(), nb: nb.id, w, h: hh, bg: { k: 'pdf', blob: blobId, n: i + 1 }, els: [] }));
     nb.pages = pages.map((p) => p.id);
@@ -504,21 +504,24 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       try {
         const data = await srcs[i].data();
         const hash = await pdfHash(data);
-        const existing = notebooks.find((nb) => nb.importHash === hash);
+        const sourceId = srcs[i].sourceId;
+        const existing = notebooks.find((nb) => nb.importHash === hash && (!sourceId || !nb.importSourceId || nb.importSourceId === sourceId));
         if (existing) {
           const sourceFolder = folderOf(i);
+          let changed = false;
+          if (sourceId && !existing.importSourceId) { existing.importSourceId = sourceId; changed = true; }
           if (sourceFolder && sourceFolder !== 'Goodnotes' && (!existing.folder || existing.folder === 'Goodnotes')) {
             existing.folder = sourceFolder;
-            existing.updated = Date.now();
-            await db.putNotebook(existing);
+            changed = true;
             if (!folders.includes(sourceFolder)) { folders.push(sourceFolder); await db.putMeta('folders', folders); }
           }
+          if (changed) { existing.updated = Date.now(); await db.putNotebook(existing); }
           duplicates++; await srcs[i].onImported?.(); continue;
         }
         const sizes = await pdfPageSizes(data);
         if (!sizes.length) throw new Error('PDF has no pages');
         const folder = folderOf(i) || currentFolder();
-        const nb = await createPdfNotebook(data, sizes, importTitle(srcs[i].name), folder, opt.margin, opt.marginTpl, hash);
+        const nb = await createPdfNotebook(data, sizes, importTitle(srcs[i].name), folder, opt.margin, opt.marginTpl, hash, sourceId);
         notebooks.push(nb);
         await srcs[i].onImported?.();
         if (folder && !folders.includes(folder)) { folders.push(folder); await db.putMeta('folders', folders); }

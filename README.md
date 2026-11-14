@@ -183,6 +183,8 @@ Private migration exports can also be placed under `~/.local/share/notesgood/goo
 subfolder for each Goodnotes folder. The local app preserves those folders, including repeated filenames
 in different folders. An identical PDF previously imported into the generic Goodnotes folder is moved
 into its source folder without replacing its pages or annotations. Keep this inbox outside the repository.
+Separate inbox entries retain separate notebook identities even if their PDFs are identical. Automatic
+imports and cover generation also continue while the desktop window is hidden.
 
 **For PDF backups:** choose **Watch a backup folder…** and select a local PDF backup folder. In supported
 browsers, Notesgood remembers that folder and checks for new or changed PDFs while the library is open.

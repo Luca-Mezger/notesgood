@@ -53,6 +53,8 @@ try {
   const evaluate = async (expression) => { const result = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails)); return result.result.value; };
   const until = async (expression) => { for (let i = 0; i < 150; i++) { if (await evaluate(expression)) return; await delay(100); } throw Error('Timed out: ' + expression); };
   await send('Page.enable');
+  // Hidden desktop windows stop animation frames. Imports and covers must still complete.
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.requestAnimationFrame = () => 0;' });
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 850, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: base + '/' });
   await until("document.querySelectorAll('.card').length===2 && document.querySelector('.import-status')?.textContent.includes('already imported')");
@@ -90,6 +92,13 @@ try {
   await until("document.querySelectorAll('.card').length===1");
   assert((await evaluate("document.querySelector('.card').textContent")).includes('Algebra'));
   console.log('PASS: private migration exports recover the original folder without duplicating an existing notebook.');
+  await mkdir(join(inboxDir, 'Other course'), { recursive: true });
+  await writeFile(join(inboxDir, 'Other course', 'Algebra.pdf'), first);
+  await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Check now').click()");
+  await until("[...document.querySelectorAll('.chip')].some(e=>e.textContent.includes('Other course'))");
+  await evaluate("[...document.querySelectorAll('.chip')].find(e=>e.textContent.includes('Other course')).click()");
+  await until("document.querySelectorAll('.card').length===1");
+  console.log('PASS: distinct migration sources keep their separate notebooks even when their PDF content is identical.');
   const shot = await send('Page.captureScreenshot', { format: 'png' });
   await writeFile('/tmp/notesgood-import-check.png', Buffer.from(shot.data, 'base64'));
 } finally {

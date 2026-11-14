@@ -1,6 +1,6 @@
 import { readZip } from './unzip';
 
-export interface PdfSource { name: string; dir: string; data(): Promise<ArrayBuffer>; onImported?(): Promise<void> }
+export interface PdfSource { name: string; dir: string; sourceId?: string; data(): Promise<ArrayBuffer>; onImported?(): Promise<void> }
 export interface ImportFile { file: File; path: string }
 
 export function cleanImportPath(path: string): string {

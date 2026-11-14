@@ -78,7 +78,7 @@ function pump() {
 }
 
 /** Renders one PDF page to a new canvas at `scale` device pixels per point. Resolves null if cancelled. */
-export function renderPdfPage(blobId: string, n: number, scale: number, prio = 1): RenderJob {
+export function renderPdfPage(blobId: string, n: number, scale: number, prio = 1, background = false): RenderJob {
   let task: { cancel(): void } | null = null;
   let resolve!: (c: HTMLCanvasElement | null) => void;
   const promise = new Promise<HTMLCanvasElement | null>((r) => (resolve = r));
@@ -94,7 +94,9 @@ export function renderPdfPage(blobId: string, n: number, scale: number, prio = 1
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, Math.round(viewport.width));
         canvas.height = Math.max(1, Math.round(viewport.height));
-        const rt = page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport } as any);
+        // PDF.js display rendering waits for animation frames, which stop in hidden windows.
+        // Covers use its offscreen print scheduler so automatic imports can finish in the background.
+        const rt = page.render({ canvas, canvasContext: canvas.getContext('2d')!, viewport, intent: background ? 'print' : 'display' } as any);
         task = rt;
         await rt.promise;
         resolve(q.cancelled ? null : canvas);

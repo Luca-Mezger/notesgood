@@ -44,11 +44,11 @@ function paintInk(canvas: HTMLCanvasElement, page: Page, scale: number) {
 }
 
 /** Renders a page preview into `canvas`. Returns a job handle if a PDF render is pending. */
-export function renderThumb(canvas: HTMLCanvasElement, page: Page, nb: Notebook, widthPx: number): RenderJob | null {
+export function renderThumb(canvas: HTMLCanvasElement, page: Page, nb: Notebook, widthPx: number, background = false): RenderJob | null {
   const scale = paintBase(canvas, page, nb, widthPx);
   paintInk(canvas, page, scale);
   if (page.bg.k !== 'pdf') return null;
-  const job = renderPdfPage(page.bg.blob, page.bg.n, scale, 0);
+  const job = renderPdfPage(page.bg.blob, page.bg.n, scale, 0, background);
   job.promise.then((pdf) => {
     if (!pdf) return;
     paintBase(canvas, page, nb, widthPx);
@@ -63,7 +63,7 @@ export function renderThumb(canvas: HTMLCanvasElement, page: Page, nb: Notebook,
 /** Cover image (data URL) from a notebook's first page. */
 export async function makeCover(page: Page, nb: Notebook): Promise<string> {
   const canvas = document.createElement('canvas');
-  const job = renderThumb(canvas, page, nb, 420);
+  const job = renderThumb(canvas, page, nb, 420, true);
   if (job) await job.promise;
   return canvas.toDataURL('image/jpeg', 0.8);
 }
