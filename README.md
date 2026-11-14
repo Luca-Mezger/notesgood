@@ -5,6 +5,32 @@ a writable margin beside every page, and LaTeX. One web codebase that runs in th
 on NixOS and on Android. Notes are stored on the device (IndexedDB) and can be synced between
 your devices through a tiny server you host yourself; there are no accounts.
 
+**Vibe coded:** built iteratively with AI coding assistants.
+
+[Try Notesgood in your browser](https://lucamezger.com/notesgood/).
+
+## Screenshots
+
+These screenshots show the running app with sample notebooks and a demo lecture PDF.
+
+### PDF annotation
+
+Read a PDF and write beside it in an adjustable margin.
+
+![Notesgood showing a lecture PDF with highlights, formulas, and notes in the side margin](docs/screenshots/pdf-annotation.png)
+
+### Notes and LaTeX
+
+Combine ink, diagrams, text, and rendered formulas on a notebook page.
+
+![Notesgood notebook editor with a vector diagram and rendered LaTeX formulas](docs/screenshots/notebook.png)
+
+### Notebook library
+
+Keep notebooks in folders, mark favourites, and search your notes.
+
+![Notesgood library with sample notebooks, folders, favourites, and search](docs/screenshots/library.png)
+
 ## Run it
 
 A prebuilt copy is in `dist/`, so you only need Node to serve it:
