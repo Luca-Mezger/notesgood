@@ -37,6 +37,8 @@ export interface Notebook {
   tpl: Tpl;
   paper: string;
   cover?: string; // data URL
+  /** Fingerprint of an imported PDF; travels with sync to prevent importing it twice. */
+  importHash?: string;
 }
 
 /** Full page height including any space added below. */

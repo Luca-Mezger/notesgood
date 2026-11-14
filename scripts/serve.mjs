@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { handleGoodnotesImport } from './goodnotes-import.mjs';
 
 const dist = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist');
 const port = Number(process.argv[2] || process.env.PORT || 5173);
@@ -15,6 +16,7 @@ const types = {
 
 createServer(async (req, res) => {
   try {
+    if (await handleGoodnotesImport(req, res)) return;
     let p = normalize(decodeURIComponent(new URL(req.url, 'http://x').pathname));
     if (p.includes('..')) throw new Error('bad path');
     let file = join(dist, p);

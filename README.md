@@ -164,11 +164,29 @@ each time. Finished strokes are baked into a per-page canvas; only pages near th
 
 ## Importing from GoodNotes
 
-GoodNotes' own `.goodnotes` files are a closed format, so they cannot be read directly. In GoodNotes,
-select your folders in the Documents view, choose Export with PDF as the format, and import the ZIP it
-produces here (⋯ → Import from GoodNotes… shows the same steps). Each notebook becomes a PDF notebook
-with your chosen writing margin; your old handwriting is part of the page image, so it can be written over
-but not erased stroke by stroke.
+Choose **From Goodnotes** in the library to import PDFs, a ZIP, or a whole folder. The importer keeps
+folders, handles nested PDF ZIP exports, and skips PDFs with the same content, even after renaming.
+The original page layout is kept by default; extra writing space can be added in the import dialog.
+
+**Goodnotes Web, Windows, and Android:** open a notebook → Share → Export as PDF. Goodnotes documents
+this as a per-notebook workflow; you do not need a full-library export to start importing.
+See [Goodnotes' export instructions](https://support.goodnotes.com/hc/en-us/articles/7353742824975-Export-documents-or-pages).
+
+**On the installed Nix desktop:** completed PDF downloads from the dedicated Goodnotes browser app
+are picked up automatically from Downloads while Notesgood's library is open, checked every minute.
+Pause or resume this from the library. The local helper uses Node 24 and reads a private snapshot of
+the Fleet Goodnotes profile's download history; it imports only completed PDFs actually downloaded
+from `web.goodnotes.com`. Unrelated downloads and PDFs merely prepared for Goodnotes are ignored.
+The original files are kept. A changed export becomes a new notebook, leaving existing annotations intact.
+
+**For PDF backups:** choose **Watch a backup folder…** and select a local PDF backup folder. In supported
+browsers, Notesgood remembers that folder and checks for new or changed PDFs while the library is open.
+The browser may ask you to reconnect the folder after restarting. Goodnotes Auto Backup must use PDF
+or PDF + Goodnotes format; a native `.goodnotes` backup alone cannot be imported.
+
+On iPad or Mac, you can select documents or folders and export them as PDF; import the resulting ZIP
+here in one step. Existing handwriting stays visible as part of the PDF, so you can write on and beside
+it, but cannot erase the old handwriting stroke by stroke. Native `.goodnotes` files need a PDF export first.
 
 ## Not there yet
 

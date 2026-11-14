@@ -130,6 +130,10 @@ input[type='range'] { accent-color: var(--ink); min-width: 90px; }
 .search input { border: 0; outline: 0; background: none; flex: 1; min-width: 0; color: var(--ink); }
 .sort { width: auto; }
 .lib-actions { display: flex; gap: 8px; margin-left: auto; }
+.import-status { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.import-status[hidden] { display: none; }
+.import-status > span { flex: 1 1 220px; }
+.import-choices { display: flex; flex-direction: column; gap: 8px; }
 
 .chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 18px; scrollbar-width: none; }
 .chip {
