@@ -17,7 +17,8 @@ export function importFolders(sources: PdfSource[]): string[] {
   // A single folder is useful information; don't flatten an export just because all PDFs share it.
   let common = 0;
   while (dirs.length > 1 && dirs.every((d) => d.length > common + 1 && d[common] === dirs[0][common])) common++;
-  return dirs.map((d) => d.slice(common).join(' / '));
+  // A local migration source already supplies its actual folder path, not an export wrapper.
+  return dirs.map((d, i) => d.slice(sources[i].sourceId ? 0 : common).join(' / '));
 }
 
 export async function pdfHash(data: ArrayBuffer): Promise<string> {

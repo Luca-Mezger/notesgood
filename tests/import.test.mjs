@@ -31,6 +31,7 @@ test('PDF folders remain meaningful, including a single folder or a single docum
   assert.deepEqual(importFolders([{ dir: 'Export/Math' }, { dir: 'Export/Physics' }]), ['Math', 'Physics']);
   assert.deepEqual(importFolders([{ dir: 'Math' }, { dir: 'Math' }]), ['Math', 'Math']);
   assert.deepEqual(importFolders([{ dir: 'Math/Week 1' }]), ['Math / Week 1']);
+  assert.deepEqual(importFolders([{ dir: 'Math/Week 1', sourceId: 'inbox/a' }, { dir: 'Math/Week 2', sourceId: 'inbox/b' }]), ['Math / Week 1', 'Math / Week 2']);
 });
 
 test('Goodnotes export suffixes are removed without changing ordinary titles', () => {
