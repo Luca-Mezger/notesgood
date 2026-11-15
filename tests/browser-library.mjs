@@ -310,6 +310,28 @@ try {
   console.log('PASS: lasso release keeps the tool/selection active across repeated moves; only tapping blank space returns to the pen.');
 
   const toolKey = (key) => evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true}))`);
+  await toolKey('l');
+  const hoverPoint = { x: point.x + 300, y: point.y + 220 };
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...hoverPoint, button: 'middle', pointerType: 'pen', force: 0, clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...hoverPoint, button: 'middle', pointerType: 'pen', force: 0, clickCount: 1 });
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"), 'select', 'A hovering pen button is not a blank-page tap and must not exit lasso');
+  await toolKey('p');
+  const loop = [
+    { x: from.x - 45, y: from.y - 45 }, { x: from.x + 45, y: from.y - 45 },
+    { x: from.x + 45, y: from.y + 45 }, { x: from.x - 45, y: from.y + 45 },
+    { x: from.x - 45, y: from.y - 45 },
+  ];
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...loop[0], button: 'left', pointerType: 'pen', force: 0, clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...loop[1], button: 'left', buttons: 1, pointerType: 'pen', force: 0 });
+  // The physical button bridge can deliver its shortcut just after tip-down.
+  await toolKey('l');
+  for (const p of loop.slice(2)) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...p, button: 'left', buttons: 1, pointerType: 'pen', force: 0 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...loop[4], button: 'left', pointerType: 'pen', force: 0, clickCount: 1 });
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"), 'select');
+  assert.equal(await evaluate("document.querySelectorAll('.selbox').length"), 1, 'A delayed lasso shortcut must select ink with the same gesture, including on zero-pressure XWayland devices');
+  await penGesture(hoverPoint);
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"), 'pen');
+  console.log('PASS: hover button clicks keep lasso active, and a late button shortcut turns the current pen gesture into a working lasso.');
   const cursor = () => evaluate("decodeURIComponent(getComputedStyle(document.querySelector('.viewport')).cursor)");
   await toolKey('p');
   assert.match(await cursor(), /data:image\/svg\+xml/);

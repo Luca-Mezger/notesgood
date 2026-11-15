@@ -740,6 +740,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     return [(cx - r.left) / zoom, (cy - r.top) / zoom];
   };
   const pressureOf = (e: PointerEvent) => (ts.pressure && e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5);
+  const penContact = (e: PointerEvent) => (e.buttons & 1) !== 0 || ((e.buttons & 32) !== 0 && e.pressure > 0);
 
   const capture = (id: number) => { try { viewport.setPointerCapture(id); } catch { /* pointer already gone */ } };
 
@@ -766,6 +767,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     const target = e.target as HTMLElement;
     if (target.closest('.editing')) return; // typing in a text box
     if (e.pointerType === 'mouse' && e.button === 2) return;
+    if (e.pointerType === 'pen' && !penContact(e)) return; // a hovering barrel button is not a page tap
     cancelAnimationFrame(inertia);
 
     if (e.pointerType === 'touch') {
@@ -886,6 +888,12 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const schedule = (fn: () => void) => { cancelAnimationFrame(frame); frame = requestAnimationFrame(fn); };
 
   function onMove(e: PointerEvent) {
+    if (e.pointerType === 'pen') {
+      // If a barrel button was pressed in the air, tip contact/release arrive
+      // as pointermove events rather than another pointerdown/pointerup pair.
+      if (penPointer === null && penContact(e)) onDown(e);
+      else if (penPointer === e.pointerId && !penContact(e)) { onUp(e); return; }
+    }
     if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
       const t = touches.get(e.pointerId)!;
       const dx = e.clientX - t.x, dy = e.clientY - t.y;
@@ -1589,6 +1597,16 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   // ---------- toolbar ----------
   function setTool(t: Tool) {
     editing?.finish();
+    if (t === 'select' && act?.k === 'draw') {
+      // The desktop button shortcut can arrive just after the tip lands.
+      // Continue this same gesture as a lasso instead of leaving it as ink.
+      const a = act;
+      clearTimeout(a.timer);
+      clearLive();
+      const pts: number[] = [];
+      for (let i = 0; i < a.pts.length; i += 3) pts.push(a.pts[i], a.pts[i + 1]);
+      act = { k: 'lasso', id: a.id, pv: a.pv, pts };
+    }
     if (t !== 'select') setSel(null);
     ts.tool = t;
     saveSettings();
