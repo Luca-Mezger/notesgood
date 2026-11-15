@@ -727,6 +727,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
 
   // ---------- pointer input ----------
   const touches = new Map<number, { x: number; y: number }>();
+  let penPointer: number | null = null;
   let pinch: { d: number; z: number; mx: number; my: number } | null = null;
   let touchPan = false, vx = 0, vy = 0, lastT = 0, inertia = 0;
 
@@ -742,6 +743,25 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
 
   const capture = (id: number) => { try { viewport.setPointerCapture(id); } catch { /* pointer already gone */ } };
 
+  function resetTouchGesture() {
+    touches.clear();
+    pinch = null;
+    touchPan = false;
+    vx = vy = 0;
+    cancelAnimationFrame(inertia);
+  }
+
+  function resumeTouchGesture(timeStamp: number) {
+    pinch = null;
+    touchPan = touches.size === 1;
+    vx = vy = 0;
+    lastT = timeStamp;
+    if (touches.size >= 2) {
+      const [a, b] = [...touches.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: zoom, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    }
+  }
+
   function onDown(e: PointerEvent) {
     const target = e.target as HTMLElement;
     if (target.closest('.editing')) return; // typing in a text box
@@ -750,17 +770,25 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
 
     if (e.pointerType === 'touch') {
       touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      capture(e.pointerId);
+      // Track fingers that land just before pen-up, without letting a palm
+      // scroll the page or a second finger discard the unfinished stroke.
+      if (penPointer !== null) return;
       if (touches.size === 1) {
         if (startRulerDrag(e)) return;
         const draws = ts.fingerDraw && ts.tool !== 'hand';
         if (draws) startAction(e); else startTouchPan(e);
       } else if (touches.size === 2) {
         if (act) cancelAction();
-        const [a, b] = [...touches.values()];
-        pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: zoom, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
-        touchPan = false;
+        resumeTouchGesture(e.timeStamp);
       }
       return;
+    }
+    if (e.pointerType === 'pen') {
+      penPointer = e.pointerId;
+      // Contacts from before this stroke belong to the resting palm. Do not
+      // let them turn the next one-finger pan into an accidental pinch.
+      resetTouchGesture();
     }
     if (e.pointerType === 'pen' && !ts.penSeen) {
       // First stylus contact: from now on fingers scroll and only the pen writes (palm rejection).
@@ -862,6 +890,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       const t = touches.get(e.pointerId)!;
       const dx = e.clientX - t.x, dy = e.clientY - t.y;
       t.x = e.clientX; t.y = e.clientY;
+      if (penPointer !== null) return;
       if (pinch && touches.size >= 2) {
         const [a, b] = [...touches.values()];
         const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
@@ -1153,15 +1182,29 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
 
   function onUp(e: PointerEvent) {
+    const penFinished = e.pointerType === 'pen' && penPointer === e.pointerId;
+    try { finishPointer(e); }
+    finally {
+      if (penFinished) {
+        penPointer = null;
+        if (e.type === 'pointercancel') resetTouchGesture();
+        else resumeTouchGesture(e.timeStamp);
+      }
+    }
+  }
+
+  function finishPointer(e: PointerEvent) {
     if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
       touches.delete(e.pointerId);
-      if (pinch) {
-        if (touches.size < 2) { pinch = null; if (touches.size === 1) { touchPan = true; vx = vy = 0; lastT = e.timeStamp; } }
-        return;
-      }
-      if (touchPan) {
-        touchPan = false;
-        if (e.timeStamp - lastT < 80 && Math.hypot(vx, vy) > 0.08) glide();
+      if (penPointer !== null) return;
+      if (pinch || touchPan) {
+        const wasPanning = touchPan;
+        if (touches.size) resumeTouchGesture(e.timeStamp);
+        else {
+          pinch = null;
+          touchPan = false;
+          if (e.type !== 'pointercancel' && wasPanning && e.timeStamp - lastT < 80 && Math.hypot(vx, vy) > 0.08) glide();
+        }
         return;
       }
     }
@@ -1702,6 +1745,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       if (closed) return;
       savePosition();
       closed = true;
+      resetTouchGesture();
+      penPointer = null;
       clearTimeout(positionTimer);
       clearTimeout(zoomTimer);
       cancelAnimationFrame(scrollRaf);

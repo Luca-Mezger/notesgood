@@ -355,6 +355,46 @@ try {
   await evaluate(`localStorage.setItem('notesgood.position.'+${JSON.stringify(pdfId)},'invalid saved data')`);
   await openPdf();
   assert.equal((await readView()).top, 0, 'Invalid saved state must fall back to the first page');
+
+  await toolKey('p');
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  const touch = (type, points) => send('Input.dispatchTouchEvent', { type, touchPoints: points.map(([id, x, y]) => ({ id, x, y, radiusX: 5, radiusY: 5, force: 0.5 })) });
+  await evaluate("document.querySelector('.viewport').scrollTop=400");
+  const fingerStart = await readView();
+  // A palm is present before the pen lands. It must stop controlling the page.
+  await touch('touchStart', [[1, 450, 400]]);
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 600, y: 300, button: 'left', pointerType: 'pen', force: 0.5 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 640, y: 340, button: 'left', buttons: 1, pointerType: 'pen', force: 0.5 });
+  await touch('touchMove', [[1, 450, 350]]);
+  assert.equal((await readView()).top, fingerStart.top, 'A resting palm must not scroll during a pen stroke');
+  await touch('touchEnd', []);
+  // A deliberate finger lands just before pen-up, then moves immediately.
+  await touch('touchStart', [[2, 450, 400]]);
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 640, y: 340, button: 'left', pointerType: 'pen', force: 0 });
+  await touch('touchMove', [[2, 450, 340]]);
+  assert((await readView()).top > fingerStart.top + 40, 'The very first finger move after pen-up must scroll');
+  await touch('touchEnd', []);
+  console.log('PASS: a palm cannot move the page during writing; an overlapping finger scrolls on its first move after pen-up.');
+
+  await evaluate("document.querySelector('.viewport').scrollTop=400");
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 600, y: 300, button: 'left', pointerType: 'pen', force: 0.5 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 640, y: 340, button: 'left', buttons: 1, pointerType: 'pen', force: 0.5 });
+  await touch('touchStart', [[3, 450, 400], [4, 650, 400]]);
+  const beforePinch = await readView();
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 640, y: 340, button: 'left', pointerType: 'pen', force: 0 });
+  await touch('touchMove', [[3, 410, 400], [4, 690, 400]]);
+  assert((await readView()).zoom > beforePinch.zoom * 1.2, 'An overlapping pinch must zoom immediately after pen-up');
+  await touch('touchCancel', []);
+  const afterCancel = await readView();
+  await touch('touchStart', [[5, 450, 400]]);
+  await touch('touchMove', [[5, 450, 340]]);
+  assert((await readView()).top > afterCancel.top + 40, 'A fresh finger must pan immediately after a canceled pinch');
+  await touch('touchEnd', []);
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  await until(`(async()=>{const nb=await readRecord('notebooks',${JSON.stringify(pdfId)});let count=0;for(const id of nb.pages)count+=(await readRecord('pages',id)).els.filter(e=>e.t==='s').length;return count===2})()`);
+  await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+  console.log('PASS: an overlapping pinch reacts immediately, canceled gestures do not block the next pan, and both written strokes survive.');
+
   assert.deepEqual(exceptions, [], 'No uncaught exceptions while restoring positions');
   console.log('PASS: invalid saved positions fall back safely without blocking the PDF.');
 } finally {
