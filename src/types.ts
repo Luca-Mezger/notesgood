@@ -8,9 +8,11 @@ export interface Stroke { t: 's'; id: string; k: 'pen' | 'hl'; c: string; s: num
 export type ShapeKind = 'line' | 'arrow' | 'rect' | 'ellipse';
 export interface Shape { t: 'h'; id: string; k: ShapeKind; c: string; s: number; x1: number; y1: number; x2: number; y2: number }
 /** Text box. `$...$` inside the text is rendered as inline LaTeX. w/h are measured at render time. */
-export interface TextEl { t: 't'; id: string; x: number; y: number; c: string; fs: number; text: string; w?: number; h?: number }
+export interface TextEl { t: 't'; id: string; x: number; y: number; c: string; fs: number; text: string; w?: number; h?: number; handwriting?: HandwritingSource }
 /** Display-style LaTeX block. */
-export interface TexEl { t: 'x'; id: string; x: number; y: number; c: string; fs: number; src: string; w?: number; h?: number }
+export interface TexEl { t: 'x'; id: string; x: number; y: number; c: string; fs: number; src: string; w?: number; h?: number; handwriting?: HandwritingSource }
+/** Plain arrays keep the original ink lossless through JSON sync and backup files. */
+export interface HandwritingSource { x: number; y: number; fs: number; ink: (Shape | (Omit<Stroke, 'p'> & { p: number[] }))[] }
 /** Pasted or inserted picture; the bitmap lives in the blob store. Always drawn beneath the ink. */
 export interface ImageEl { t: 'i'; id: string; x: number; y: number; w: number; h: number; blob: string; /** locked pictures cannot be selected or moved */ lock?: boolean }
 export type El = Stroke | Shape | TextEl | TexEl | ImageEl;
@@ -21,6 +23,10 @@ export type Bg =
 
 /** For PDF pages, w/h is the size of the PDF page itself; the side margin is added on top (see pageW). */
 export interface Page { id: string; nb: string; w: number; h: number; bg: Bg; els: El[]; /** last change (ms), used by sync */ u?: number; /** extra height added below the original page (points) */ ext?: number }
+
+export interface SavedOp { page: string; removed: [number, El][]; added: [number, El][] }
+/** Local undo checkpoints are valid only while their pages have the same revisions. */
+export interface EditorHistory { v: 1; undo: SavedOp[]; redo: SavedOp[]; revisions: [string, number][] }
 
 export interface Notebook {
   id: string;

@@ -7,7 +7,7 @@ import {
   onImageReady, PAPER_COLORS, polyStroke, recognize, shapeToStroke, unionBBox, xformEl, type Snap,
 } from './render';
 import { makeCover, renderThumb } from './thumb';
-import { pageH, pageW, uid, type El, type ImageEl, type Notebook, type Page, type ShapeKind, type TexEl, type TextEl, type Tpl } from './types';
+import { pageH, pageW, uid, type EditorHistory, type El, type ImageEl, type Notebook, type Page, type SavedOp, type ShapeKind, type TexEl, type TextEl, type Tpl } from './types';
 import { confirmDlg, download, h, icon, iconBtn, menu, popover, toast } from './ui';
 import { sync, syncEnabled } from './sync';
 import { inkToPng, recogReady, recognize as recogInk, RECOG_MODELS, recogConfig, saveRecogConfig, type RecogProvider } from './recognize';
@@ -126,6 +126,17 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   let sel: { pv: PV; els: El[] } | null = null;
   let editing: { finish: () => void } | null = null;
   const undo: Op[] = [], redo: Op[] = [];
+  const checkpoint = await db.meta<EditorHistory>('history:' + nbId);
+  if (checkpoint?.v === 1) {
+    const revisions = new Map(checkpoint.revisions);
+    const valid = (op: SavedOp) => nb.pages.includes(op.page) && byId.has(op.page) && revisions.get(op.page) === (byId.get(op.page)!.u ?? 0);
+    // A sync from another device may have replaced pages since this local checkpoint.
+    if ([...checkpoint.undo, ...checkpoint.redo].every(valid)) {
+      const restore = (op: SavedOp): Op => ({ ...op, page: byId.get(op.page)! });
+      undo.push(...checkpoint.undo.map(restore));
+      redo.push(...checkpoint.redo.map(restore));
+    }
+  }
   const dirty = new Set<Page>();
   const thumbDirty = new Set<Page>();
   let saveTimer = 0, zoomTimer = 0, positionTimer = 0, closed = false;
@@ -529,8 +540,11 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     dirty.clear();
     if (list.length) nb.updated = Date.now();
     try {
-      if (list.length) await db.putPages(list);
-      await db.putNotebook(nb);
+      const saveOp = (op: Op): SavedOp => ({ ...op, page: op.page.id });
+      await db.putEditorState(nb, list, {
+        v: 1, undo: undo.map(saveOp), redo: redo.map(saveOp),
+        revisions: pages.map(p => [p.id, p.u ?? 0]),
+      });
     } catch (e) {
       console.error(e);
       for (const p of list) dirty.add(p);
@@ -545,7 +559,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
 
   function pushOp(op: Op) {
-    undo.push(op);
+    undo.push({ page: op.page, removed: structuredClone(op.removed), added: structuredClone(op.added) });
     if (undo.length > 300) undo.shift();
     redo.length = 0;
     markDirty(op.page);
@@ -554,8 +568,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   function applyOp(op: Op, inverse: boolean) {
     const els = op.page.els;
     const rem = inverse ? op.added : op.removed, add = inverse ? op.removed : op.added;
-    for (const [, e] of rem) { const i = els.indexOf(e); if (i >= 0) els.splice(i, 1); }
-    for (const [i, e] of [...add].sort((a, b) => a[0] - b[0])) els.splice(Math.min(i, els.length), 0, e);
+    for (const [, e] of rem) { const i = els.findIndex(current => current.id === e.id); if (i >= 0) els.splice(i, 1); }
+    for (const [i, e] of [...add].sort((a, b) => a[0] - b[0])) els.splice(Math.min(i, els.length), 0, structuredClone(e));
     setSel(null);
     const pv = pvOf.get(op.page);
     if (pv) {
@@ -718,6 +732,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       h('div', { class: 'snips' }, ...SNIPPETS.map(([label, s, back]) =>
         h('button', { type: 'button', class: 'snip', title: s, onpointerdown: (e: Event) => e.preventDefault(), onclick: () => insert(s, back) }, label))),
       h('div', { class: 'modal-actions' },
+        existing?.handwriting ? h('button', { class: 'btn', type: 'button', onclick: () => { closeTex(); restoreHandwriting(pv, [existing]); } }, 'Restore handwriting') : null,
         h('button', { class: 'btn', type: 'button', onclick: closeTex }, 'Cancel'),
         h('button', { class: 'btn primary', type: 'button', onclick: commit }, existing ? 'Update' : 'Insert')));
     stage.append(texPanel);
@@ -1122,30 +1137,58 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
 
   // ---------- handwriting recognition ----------
+  function restoreHandwriting(pv: PV, selected: El[]) {
+    const restored: El[] = [], removed: [number, El][] = [];
+    const replacements = new Map<El, El[]>();
+    for (const el of selected) {
+      if ((el.t !== 'x' && el.t !== 't') || !el.handwriting) continue;
+      const i = pv.page.els.indexOf(el);
+      if (i < 0) continue;
+      const source = el.handwriting;
+      const ink = source.ink.map(saved => {
+        const original: El = saved.t === 's' ? { ...saved, p: new Float32Array(saved.p) } : { ...saved };
+        const copy = cloneEl(original, true);
+        xformEl(original, copy, el.x - source.x, el.y - source.y, el.fs / source.fs, source.x, source.y);
+        return copy;
+      });
+      removed.push([i, el]);
+      replacements.set(el, ink);
+      restored.push(...ink);
+    }
+    if (!restored.length) return;
+    pv.page.els = pv.page.els.flatMap(el => replacements.get(el) ?? [el]);
+    const added = restored.map(el => [pv.page.els.indexOf(el), el] as [number, El]);
+    pushOp({ page: pv.page, removed, added });
+    refreshPage(pv);
+    setTool('select');
+    setSel({ pv, els: restored });
+    toast('Handwriting restored.');
+  }
   async function convertSel(kind: 'latex' | 'text') {
     if (!sel) return;
     const { pv, els } = sel;
-    const ink: El[] = els.filter((e) => e.t === 's' || e.t === 'h');
+    const ink = els.filter((e) => e.t === 's' || e.t === 'h');
     if (!ink.length) { toast('Select some handwriting first.'); return; }
     if (!recogReady()) { toast('Add your API key first: Settings → Handwriting recognition.'); settingsPopover(); return; }
     try {
       toast(kind === 'latex' ? 'Reading the maths…' : 'Reading the handwriting…', true);
       const { png } = inkToPng(ink);
       const out = await recogInk(png, kind);
-      if (!sel || sel.pv !== pv) return;
+      if (closed || !pages.includes(pv.page) || !sel || sel.pv !== pv || !ink.every(e => pv.page.els.includes(e) && sel!.els.includes(e))) return;
       const bb = unionBBox(ink)!;
       const lines = kind === 'latex' ? (out.match(/\\\\/g)?.length ?? 0) + 1 : out.split('\n').length;
       const fs = Math.max(9, Math.min(36, ((bb[3] - bb[1]) / lines) * (kind === 'latex' ? 0.55 : 0.7)));
-      const el: El = kind === 'latex'
+      const el: TexEl | TextEl = kind === 'latex'
         ? { t: 'x', id: uid(), x: bb[0], y: bb[1], c: ts.tex.c, fs, src: out }
         : { t: 't', id: uid(), x: bb[0], y: bb[1], c: ts.text.c, fs, text: out };
+      el.handwriting = { x: el.x, y: el.y, fs, ink: ink.map(e => e.t === 's' ? { ...e, p: Array.from(e.p), bb: [...e.bb] } : { ...e }) };
       const all = pv.page.els;
       const removed = ink.map((e) => [all.indexOf(e), e] as [number, El]);
-      pv.page.els = all.filter((e) => !ink.includes(e));
+      pv.page.els = all.filter((e) => !ink.some(stroke => stroke === e));
       pv.page.els.push(el);
-      setSel(null);
       refreshPage(pv);
       pushOp({ page: pv.page, removed, added: [[pv.page.els.length - 1, el]] });
+      setSel({ pv, els: [el] });
       toast(kind === 'latex' ? 'Converted to LaTeX. Tap it with the Σ tool to edit the source.' : 'Converted to text.');
     } catch (e: any) {
       console.error(e);
@@ -1717,6 +1760,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         !sel && pvs[curIdx]?.page.els.some(locked) ? h('button', { class: 'btn small', type: 'button', onclick: () => unlockAll(pvs[curIdx]) }, icon('unlock', 16), 'Unlock pictures on this page') : null,
         sel && sel.els.some((e) => e.t === 's' || e.t === 'h') ? h('button', { class: 'btn small', type: 'button', title: 'Handwritten maths → rendered LaTeX', onclick: () => convertSel('latex') }, icon('tex', 16), 'To LaTeX') : null,
         sel && sel.els.some((e) => e.t === 's' || e.t === 'h') ? h('button', { class: 'btn small', type: 'button', title: 'Handwriting → typed text', onclick: () => convertSel('text') }, icon('text', 16), 'To text') : null,
+        sel && sel.els.some(e => (e.t === 'x' || e.t === 't') && e.handwriting) ? h('button', { class: 'btn small', type: 'button', onclick: () => { if (sel) restoreHandwriting(sel.pv, sel.els); } }, icon('undo', 16), 'Restore handwriting') : null,
         (() => { const cb = h('input', { type: 'checkbox', checked: ts.snapGrid, onchange: () => { ts.snapGrid = cb.checked; saveSettings(); } }); return h('label', { class: 'check' }, cb, 'Snap to grid'); })(),
         h('span', { class: 'hint' }, sel ? 'Drag to move · corner resizes · top handle rotates' : 'Circle items or tap one to select'));
     }

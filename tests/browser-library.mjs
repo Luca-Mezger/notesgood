@@ -267,6 +267,7 @@ try {
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
   await until(`!!document.querySelector('[title="Handwritten maths → rendered LaTeX"]')`);
+  const storedInk = await evaluate("readRecord('pages','page-0').then(p=>p.els)");
   await click('[title="Handwritten maths → rendered LaTeX"]');
   await until("!!document.querySelector('.page .katex')");
   const request = await evaluate('window.recognitionRequests[0]');
@@ -274,10 +275,83 @@ try {
   assert.equal(request.body.model, 'gpt-5.4');
   assert.equal(request.body.store, false);
   assert.match(request.body.input[0].content[0].image_url, /^data:image\/png;base64,/);
-  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true}))`);
+  const shortcut = (key, extra = {}) => evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true,...${JSON.stringify(extra)}}))`);
+  const tap = async p => {
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...p, button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...p, button: 'left', clickCount: 1 });
+  };
+  const formulaPoint = () => evaluate("(()=>{const r=document.querySelector('.obj.tex').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
+  const assertFormula = async source => {
+    assert.equal(await evaluate("document.querySelectorAll('.obj.tex').length"), 1, 'Undo must never leave duplicate formulas');
+    await evaluate("window.dispatchEvent(new Event('pagehide'))");
+    await until(`readRecord('pages','page-0').then(p=>p.els.length===1&&p.els[0].src===${JSON.stringify(source)})`);
+  };
+  assert.equal(await evaluate("[...document.querySelectorAll('.optbar button')].some(b=>b.textContent==='Restore handwriting')"), true);
+  await shortcut('m');
+  await tap(await formulaPoint());
+  await until("!!document.querySelector('.tex-panel textarea')");
+  await evaluate("(()=>{const t=document.querySelector('.tex-panel textarea');t.value='x^2 + y^2 = 2';t.dispatchEvent(new Event('input'))})()");
+  await click('.tex-panel .primary');
+  await shortcut('z', { ctrlKey: true });
+  await assertFormula('x^2 + y^2 = 1');
+  await shortcut('z', { ctrlKey: true });
   await until("!document.querySelector('.page .katex')");
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  await until("readRecord('pages','page-0').then(p=>p.els.length===1&&p.els[0].t==='s')");
+  assert.deepEqual(await evaluate("readRecord('pages','page-0').then(p=>p.els)"), storedInk, 'Undo editing and then conversion must restore the original ink exactly, with no stray formula');
+  await shortcut('y', { ctrlKey: true });
+  await shortcut('y', { ctrlKey: true });
+  await assertFormula('x^2 + y^2 = 2');
   assert.equal(await evaluate('window.recognitionRequests.length'), 1);
-  console.log('PASS: selected ink converts through mocked OpenAI vision to rendered LaTeX; undo restores the ink without a second API request.');
+  console.log('PASS: editing a recognized formula, undoing both actions and redoing them restores exact snapshots without duplicates or another API request.');
+
+  await click('[aria-label="Back to library"]');
+  await until("!!document.querySelector('.library')");
+  await chooseView('all');
+  await click('[data-notebook="note-0"] .cover');
+  await until("!!document.querySelector('.obj.tex')");
+  assert.equal(await evaluate("document.querySelector('[aria-label=\"Undo (Ctrl+Z)\"]').disabled"), false);
+  await shortcut('z', { ctrlKey: true });
+  await shortcut('z', { ctrlKey: true });
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  await until("readRecord('meta','history:note-0').then(h=>h.redo.length===2)");
+  await send('Page.reload');
+  await until("!!document.querySelector('.editor')");
+  assert.equal(await evaluate("document.querySelector('[aria-label=\"Redo (Ctrl+Shift+Z)\"]').disabled"), false);
+  await shortcut('y', { ctrlKey: true });
+  await shortcut('y', { ctrlKey: true });
+  await assertFormula('x^2 + y^2 = 2');
+  console.log('PASS: undo and redo survive leaving the notebook and restarting the app offline.');
+
+  await click('[aria-label="Back to library"]');
+  await until("!!document.querySelector('.library')");
+  const recognized = await evaluate("readRecord('pages','page-0').then(p=>p.els[0])");
+  assert.deepEqual(recognized.handwriting.ink[0].p, Object.values(storedInk[0].p));
+  assert.deepEqual(JSON.parse(JSON.stringify(recognized)).handwriting, recognized.handwriting, 'Original ink remains lossless in the JSON used by sync and backups');
+  // An edit from another device invalidates local undo, but the formula's ink travels with it.
+  await evaluate(`(async()=>{
+    const d=await new Promise(r=>{const q=indexedDB.open('margin');q.onsuccess=()=>r(q.result)});
+    const t=d.transaction('pages','readwrite'),s=t.objectStore('pages'),q=s.get('page-0');
+    q.onsuccess=()=>{const p=q.result;p.u+=1000;s.put(p)};
+    await new Promise((r,j)=>{t.oncomplete=r;t.onerror=()=>j(t.error)});d.close();
+  })()`);
+  await click('[data-notebook="note-0"] .cover');
+  await until("!!document.querySelector('.obj.tex')");
+  assert.equal(await evaluate("document.querySelector('[aria-label=\"Undo (Ctrl+Z)\"]').disabled"), true, 'Never replay stale undo over edits from another device');
+  await shortcut('m');
+  await tap(await formulaPoint());
+  await until("!!document.querySelector('.tex-panel textarea')");
+  await evaluate("[...document.querySelectorAll('.tex-panel button')].find(b=>b.textContent==='Restore handwriting').click()");
+  assert.equal(await evaluate("document.querySelectorAll('.obj.tex').length"), 0);
+  await shortcut('z', { ctrlKey: true });
+  await assertFormula('x^2 + y^2 = 2');
+  await shortcut('y', { ctrlKey: true });
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  await until("readRecord('pages','page-0').then(p=>p.els.length===1&&p.els[0].t==='s')");
+  const restoredInk = await evaluate("readRecord('pages','page-0').then(p=>p.els[0])");
+  assert.deepEqual({ ...restoredInk, id: storedInk[0].id }, storedInk[0], 'Restoring handwriting after losing local undo recovers every original sample and style');
+  await shortcut('l');
+  console.log('PASS: saved original handwriting can always be restored from the formula editor, even with no local undo history, and corrected or converted again.');
 
   const penGesture = async (from, to = from) => {
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...from, button: 'left', pointerType: 'pen', force: 0.5, clickCount: 1 });
@@ -288,6 +362,7 @@ try {
   await until("!!document.querySelector('.selbox')");
   const selectionPosition = () => evaluate("(()=>{const r=document.querySelector('.selbox').getBoundingClientRect();return {x:r.x,y:r.y}})()");
   const initialSelection = await selectionPosition();
+  const beforeMoves = await evaluate("readRecord('pages','page-0').then(p=>p.els)");
   let from = point;
   for (const [dx, dy] of [[100, 60], [70, 50], [-30, 20]]) {
     const to = { x: from.x + dx, y: from.y + dy };
@@ -299,6 +374,12 @@ try {
     from = to;
   }
   assert((await selectionPosition()).x > initialSelection.x + 100);
+  for (let i = 0; i < 3; i++) await shortcut('z', { ctrlKey: true });
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  await until(`readRecord('pages','page-0').then(p=>JSON.stringify(p.els)===${JSON.stringify(JSON.stringify(beforeMoves))})`);
+  for (let i = 0; i < 3; i++) await shortcut('y', { ctrlKey: true });
+  await penGesture(from);
+  assert(Math.abs((await selectionPosition()).x - initialSelection.x - 140) < 2, 'Repeated movement must remain undoable and redoable without mutating earlier snapshots');
   await penGesture({ x: point.x + 300, y: point.y + 220 });
   assert.equal(await evaluate("document.querySelectorAll('.selbox').length"), 0);
   assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"), 'pen');

@@ -1,5 +1,5 @@
 // IndexedDB storage. Everything stays on the device.
-import type { Notebook, Page } from './types';
+import type { EditorHistory, Notebook, Page } from './types';
 
 let dbp: Promise<IDBDatabase> | null = null;
 
@@ -81,6 +81,25 @@ export const db = {
       dirty.delete('d:' + key);
     }
   }),
+  /** Commit edits and their undo checkpoint together, including when closing offline. */
+  putEditorState: (nb: Notebook, pages: Page[], history: EditorHistory) => {
+    const now = Date.now(), changed = new Set(pages.map(p => p.id));
+    for (const p of pages) p.u = now;
+    const snapshot = structuredClone({ nb, pages, history: {
+      ...history, revisions: history.revisions.map(([id, rev]) => [id, changed.has(id) ? now : rev] as [string, number]),
+    } });
+    return tx(['notebooks', 'pages', 'dirty', 'meta'], 'readwrite', (t) => {
+      t.objectStore('notebooks').put(snapshot.nb);
+      t.objectStore('dirty').put(now, 'n:' + nb.id);
+      t.objectStore('dirty').delete('d:n:' + nb.id);
+      for (const p of snapshot.pages) {
+        t.objectStore('pages').put(p);
+        t.objectStore('dirty').put(now, 'p:' + p.id);
+        t.objectStore('dirty').delete('d:p:' + p.id);
+      }
+      t.objectStore('meta').put(snapshot.history, 'history:' + nb.id);
+    });
+  },
   deletePage: (id: string, silent = false) => tx(['pages', 'dirty'], 'readwrite', (t) => {
     t.objectStore('pages').delete(id);
     if (!silent) { t.objectStore('dirty').delete('p:' + id); t.objectStore('dirty').put(Date.now(), 'd:p:' + id); }
@@ -97,8 +116,9 @@ export const db = {
       if (p.bg.k === 'pdf') blobs.add(p.bg.blob);
       for (const e of p.els) if (e.t === 'i') blobs.add(e.blob);
     }
-    await tx(['notebooks', 'pages', 'blobs', 'dirty'], 'readwrite', (t) => {
+    await tx(['notebooks', 'pages', 'blobs', 'dirty', 'meta'], 'readwrite', (t) => {
       t.objectStore('notebooks').delete(id);
+      t.objectStore('meta').delete('history:' + id);
       for (const p of pages) t.objectStore('pages').delete(p.id);
       for (const b of blobs) t.objectStore('blobs').delete(b);
       const d = t.objectStore('dirty');
