@@ -180,7 +180,7 @@ try {
   console.log('PASS: responsive layout, notebook/page/blob retention, no connection to private sync.');
 
   const pdf = await PDFDocument.create();
-  for (let i = 0; i < 8; i++) pdf.addPage([595, 842]);
+  for (let i = 0; i < 8; i++) pdf.addPage([595, 842]).drawRectangle({ x: 20 + i, y: 20, width: 10, height: 10 });
   const encoded = Buffer.from(await pdf.save()).toString('base64');
   await evaluate(`(()=>{
     const bytes=Uint8Array.from(atob(${JSON.stringify(encoded)}),c=>c.charCodeAt(0));
@@ -422,6 +422,78 @@ try {
   await until(`(async()=>{const nb=await readRecord('notebooks',${JSON.stringify(pdfId)});let count=0;for(const id of nb.pages)count+=(await readRecord('pages',id)).els.filter(e=>e.t==='s').length;return count===2})()`);
   await send('Emulation.setTouchEmulationEnabled', { enabled: false });
   console.log('PASS: an overlapping pinch reacts immediately, canceled gestures do not block the next pan, and both written strokes survive.');
+
+  const originalPages = await evaluate(`(async()=>{const nb=await readRecord('notebooks',${JSON.stringify(pdfId)});return Promise.all(nb.pages.map(id=>readRecord('pages',id)))})()`);
+  const pageOrder = originalPages.map(p => p.id);
+  const newPages = [];
+  await click('[aria-label="Pages"]');
+  const insertBlank = async (index, side, button = '.toolbar [aria-label="Add blank page"]') => {
+    await click(`.thumb[data-i="${index}"]`);
+    await until(`document.querySelector('.thumb.current')?.dataset.i==='${index}'`);
+    await click(button);
+    // Even if the viewport moves with the menu open, insert beside the chosen page.
+    await evaluate("document.querySelector('.viewport').scrollTop+=500");
+    await delay(50);
+    await evaluate(`[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Blank page ${side}').click()`);
+    const at = index + (side === 'after' ? 1 : 0);
+    await until(`document.querySelectorAll('.page').length===${pageOrder.length + 1}`);
+    const nb = await evaluate(`readRecord('notebooks',${JSON.stringify(pdfId)})`);
+    const id = nb.pages[at];
+    assert(!pageOrder.includes(id), 'Insertion must create a new page, preserving every existing page');
+    pageOrder.splice(at, 0, id);
+    assert.deepEqual(nb.pages, pageOrder);
+    const page = await evaluate(`readRecord('pages',${JSON.stringify(id)})`);
+    assert.deepEqual(page.bg, { k: 'paper', tpl: 'blank', color: nb.paper });
+    assert.deepEqual(page.els, []);
+    assert.equal(page.w, 595, 'Blank pages match the PDF itself, without its extra writing margin');
+    assert.equal(page.h, 842);
+    assert.equal(await evaluate(`readRecord('dirty',${JSON.stringify('p:' + id)}).then(Boolean)`), true);
+    assert.equal(await evaluate(`readRecord('dirty',${JSON.stringify('n:' + pdfId)}).then(Boolean)`), true);
+    assert.equal(await evaluate("document.querySelector('.thumb.current').dataset.i"), String(at), 'Jump to the inserted page');
+    newPages.push(page);
+    return id;
+  };
+  await insertBlank(0, 'before');
+  const middleId = await insertBlank(4, 'after', '.thumb-actions [aria-label="Add blank page"]');
+  await insertBlank(pageOrder.length - 1, 'after');
+  const afterInsert = await evaluate(`(async()=>Promise.all(${JSON.stringify(originalPages.map(p=>p.id))}.map(id=>readRecord('pages',id))))()`);
+  assert.deepEqual(afterInsert, originalPages, 'Inserting pages must preserve original PDF references and existing ink exactly');
+  assert.equal(await evaluate(`(async()=>{const b=await readRecord('blobs',${JSON.stringify(originalPages[0].bg.blob)});const a=new Uint8Array(await b.arrayBuffer());return btoa(String.fromCharCode(...a))})()`), encoded, 'The original PDF bytes stay untouched');
+  console.log('PASS: insert truly blank pages before the first, between PDF pages, and after the last; originals and sync markers are preserved.');
+
+  await click(`.thumb[data-i="${pageOrder.indexOf(middleId)}"]`);
+  await click('.zoom');
+  await toolKey('p');
+  const writingPoint = await evaluate(`(()=>{const r=document.querySelectorAll('.page')[${pageOrder.indexOf(middleId)}].getBoundingClientRect();return {x:r.left+100,y:r.top+100}})()`);
+  await penGesture(writingPoint, { x: writingPoint.x + 40, y: writingPoint.y + 40 });
+  // Leaving immediately also flushes the new page's ink before reopening.
+  await click('[aria-label="Back to library"]');
+  await until("!!document.querySelector('.library')");
+  await chooseView('all');
+  await click(`[data-notebook="${pdfId}"] .cover`);
+  await until(`document.querySelectorAll('.page').length===${pageOrder.length}`);
+  await send('Page.reload');
+  await until(`document.querySelectorAll('.page').length===${pageOrder.length}`);
+  assert.deepEqual(await evaluate(`readRecord('notebooks',${JSON.stringify(pdfId)}).then(nb=>nb.pages)`), pageOrder);
+  assert.equal(await evaluate(`readRecord('pages',${JSON.stringify(middleId)}).then(p=>p.els.length)`), 1, 'You can write on inserted pages and reopen them with their ink intact');
+  for (const page of newPages.filter(p => p.id !== middleId)) assert.deepEqual(await evaluate(`readRecord('pages',${JSON.stringify(page.id)})`), page);
+  console.log('PASS: inserted pages, their order and new handwriting survive leaving the notebook and restarting the app without sync.');
+
+  await evaluate(`(()=>{
+    const original=HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click=function(){
+      if(this.download&&this.href.startsWith('blob:')){
+        window.exportedPdf=fetch(this.href).then(r=>r.arrayBuffer()).then(b=>btoa(String.fromCharCode(...new Uint8Array(b))));
+      }else original.call(this);
+    };
+  })()`);
+  await click('[aria-label="Export"]');
+  await evaluate("[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Export as PDF').click()");
+  await until('!!window.exportedPdf');
+  const exported = await PDFDocument.load(Buffer.from(await evaluate('window.exportedPdf'), 'base64'));
+  assert.equal(exported.getPageCount(), pageOrder.length, 'Export includes every inserted page');
+  for (const page of newPages) assert.deepEqual(exported.getPage(pageOrder.indexOf(page.id)).getSize(), { width: 595, height: 842 });
+  console.log('PASS: PDF export includes all inserted pages at their intended positions and sizes.');
 
   assert.deepEqual(exceptions, [], 'No uncaught exceptions while restoring positions');
   console.log('PASS: invalid saved positions fall back safely without blocking the PDF.');

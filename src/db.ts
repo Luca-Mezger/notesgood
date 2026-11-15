@@ -69,6 +69,18 @@ export const db = {
       t.objectStore('pages').put(p);
     }
   }),
+  /** A new page and its place in the notebook must survive (or fail) together. */
+  insertPage: (nb: Notebook, page: Page) => tx(['notebooks', 'pages', 'dirty'], 'readwrite', (t) => {
+    const now = Date.now();
+    page.u = now;
+    t.objectStore('pages').put(page);
+    t.objectStore('notebooks').put(nb);
+    const dirty = t.objectStore('dirty');
+    for (const key of ['p:' + page.id, 'n:' + nb.id]) {
+      dirty.put(now, key);
+      dirty.delete('d:' + key);
+    }
+  }),
   deletePage: (id: string, silent = false) => tx(['pages', 'dirty'], 'readwrite', (t) => {
     t.objectStore('pages').delete(id);
     if (!silent) { t.objectStore('dirty').delete('p:' + id); t.objectStore('dirty').put(Date.now(), 'd:p:' + id); }

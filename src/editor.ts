@@ -150,7 +150,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const pageLabel = h('span', { class: 'page-label' });
   const thumbs = h('aside', { class: 'thumbs' },
     h('div', { class: 'thumb-actions' },
-      iconBtn('plus', 'Add page after this one', () => addPage()),
+      iconBtn('plus', 'Add blank page', (e) => addPageMenu(e.currentTarget as HTMLElement)),
       iconBtn('up', 'Move page up', () => movePage(-1)),
       iconBtn('down', 'Move page down', () => movePage(1)),
       iconBtn('trash', 'Delete page', () => deletePage())),
@@ -163,6 +163,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const zoomBtn = h('button', { class: 'btn small zoom', type: 'button', title: 'Fit page to width', onclick: () => { setZoom(fitZoom(false), 0, 0, true); } });
   const fingerBtn = iconBtn('finger', '', () => { ts.fingerDraw = !ts.fingerDraw; saveSettings(); syncToggles(); toast(ts.fingerDraw ? 'Finger draws. Use two fingers to scroll and zoom.' : 'Finger scrolls. Only the stylus and mouse draw.'); });
   const sideBtn = iconBtn('pages', 'Pages', () => { ts.sidebar = !ts.sidebar; saveSettings(); syncToggles(); });
+  const addPageBtn = iconBtn('plus', 'Add blank page', (e) => addPageMenu(e.currentTarget as HTMLElement));
   const marginBtn = iconBtn('margin', 'Writing space beside PDF pages', () => marginPopover());
   const exportBtn: HTMLButtonElement = iconBtn('export', 'Export', () => menu(exportBtn, [
     { label: 'Export as PDF', icon: 'pdf', action: async () => {
@@ -202,7 +203,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       h('div', { class: 'tb-group' }, undoBtn, redoBtn),
       toolRow,
       imgBtn, rulerBtn, imgInput,
-      h('div', { class: 'tb-group right' }, pageLabel, zoomBtn, fingerBtn, hasPdf() ? marginBtn : null, settingsBtn, exportBtn, sideBtn));
+      h('div', { class: 'tb-group right' }, pageLabel, zoomBtn, fingerBtn, hasPdf() ? marginBtn : null, settingsBtn, exportBtn, sideBtn, addPageBtn));
   const view = h('div', { class: 'editor' },
     toolbarEl,
     optbar,
@@ -1413,18 +1414,38 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
   function dropHistory() { undo.length = redo.length = 0; syncUndo(); }
 
-  async function addPage() {
+  let addingPage = false;
+  function addPageMenu(anchor: HTMLElement) {
+    const current = pages[curIdx];
+    menu(anchor, [
+      { label: 'Blank page before', icon: 'up', action: () => addPage(current, 0) },
+      { label: 'Blank page after', icon: 'down', action: () => addPage(current, 1) },
+    ]);
+  }
+  async function addPage(current: Page, offset: 0 | 1) {
+    if (addingPage || closed) return;
+    const at = pages.indexOf(current);
+    if (at < 0) return;
     editing?.finish();
-    const cur = pages[curIdx];
-    const page: Page = { id: uid(), nb: nb.id, w: pageW(cur, nb), h: cur.h, bg: { k: 'paper', tpl: cur.bg.k === 'paper' ? cur.bg.tpl : nb.marginTpl, color: cur.bg.k === 'paper' ? cur.bg.color : nb.paper }, els: [] };
-    pages.splice(curIdx + 1, 0, page);
-    await db.putPages([page]);
-    await saveStructure();
-    const i = curIdx + 1;
-    buildPages();
-    scrollToPage(i);
+    // Match the actual page, without copying a PDF's extra writing margin or ruling.
+    const page: Page = { id: uid(), nb: nb.id, w: current.w, h: current.h, bg: { k: 'paper', tpl: 'blank', color: current.bg.k === 'paper' ? current.bg.color : nb.paper }, els: [] };
+    const i = at + offset;
+    addingPage = true;
+    pages.splice(i, 0, page);
+    nb.pages = pages.map((p) => p.id);
+    nb.updated = Date.now();
+    try {
+      await db.insertPage(nb, page);
+      if (!closed) { buildPages(); scrollToPage(i); }
+    } catch (e) {
+      pages.splice(pages.indexOf(page), 1);
+      nb.pages = pages.map((p) => p.id);
+      console.error(e);
+      toast('Could not add a page. Your device may be out of storage.');
+    } finally { addingPage = false; }
   }
   async function movePage(d: number) {
+    if (addingPage) return;
     const j = curIdx + d;
     if (j < 0 || j >= pages.length) return;
     editing?.finish();
@@ -1434,6 +1455,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     scrollToPage(j);
   }
   async function deletePage() {
+    if (addingPage) return;
     if (pages.length < 2) { toast('A notebook needs at least one page.'); return; }
     const page = pages[curIdx];
     if (!(await confirmDlg(`Delete page ${curIdx + 1}?`, page.els.length ? 'Everything written on this page will be removed. This can’t be undone.' : 'This can’t be undone.'))) return;
