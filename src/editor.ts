@@ -172,7 +172,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const undoBtn = iconBtn('undo', 'Undo (Ctrl+Z)', () => doUndo());
   const redoBtn = iconBtn('redo', 'Redo (Ctrl+Shift+Z)', () => doRedo());
   const zoomBtn = h('button', { class: 'btn small zoom', type: 'button', title: 'Fit page to width', onclick: () => { setZoom(fitZoom(false), 0, 0, true); } });
-  const fingerBtn = iconBtn('finger', '', () => { ts.fingerDraw = !ts.fingerDraw; saveSettings(); syncToggles(); toast(ts.fingerDraw ? 'Finger draws. Use two fingers to scroll and zoom.' : 'Finger scrolls. Only the stylus and mouse draw.'); });
+  const fingerBtn = iconBtn('finger', '', () => { ts.fingerDraw = !ts.fingerDraw; saveSettings(); syncToggles(); toast(ts.fingerDraw ? 'Finger draws. Use two fingers to scroll and zoom.' : 'Finger scrolls. Only the stylus draws.'); });
   const sideBtn = iconBtn('pages', 'Pages', () => { ts.sidebar = !ts.sidebar; saveSettings(); syncToggles(); });
   const addPageBtn = iconBtn('plus', 'Add blank page', (e) => addPageMenu(e.currentTarget as HTMLElement));
   const marginBtn = iconBtn('margin', 'Writing space beside PDF pages', () => marginPopover());
@@ -584,9 +584,10 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
 
   // ---------- selection ----------
   function setSel(s: typeof sel) {
+    const hadSelection = !!sel;
     sel = s && s.els.length ? s : null;
     updateSelBox();
-    if (ts.tool === 'select') renderOptbar();
+    if (hadSelection || sel || ts.tool === 'select') renderOptbar();
   }
   function updateSelBox() {
     updateRuler();
@@ -744,10 +745,11 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   // ---------- pointer input ----------
   const touches = new Map<number, { x: number; y: number }>();
   let penPointer: number | null = null;
+  let pointerType = 'mouse';
   let pinch: { d: number; z: number; mx: number; my: number } | null = null;
   let touchPan = false, vx = 0, vy = 0, lastT = 0, inertia = 0;
 
-  const pvFromEvent = (e: PointerEvent): PV | null => {
+  const pvFromEvent = (e: MouseEvent): PV | null => {
     const el = (e.target as HTMLElement).closest?.('.page') as HTMLElement | null;
     return el ? pvs[Number(el.dataset.i)] ?? null : null;
   };
@@ -782,7 +784,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   function onDown(e: PointerEvent) {
     const target = e.target as HTMLElement;
     if (target.closest('.editing')) return; // typing in a text box
-    if (e.pointerType === 'mouse' && e.button === 2) return;
+    if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 1) return;
+    updatePointerType(e);
     if (e.pointerType === 'pen' && !penContact(e)) return; // a hovering barrel button is not a page tap
     cancelAnimationFrame(inertia);
 
@@ -818,13 +821,78 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     if (e.pointerType === 'pen' && act) cancelAction(); // a resting palm may have started something
     if (act) return;
     if (startRulerDrag(e)) return;
-    if ((e.pointerType === 'mouse' && e.button === 1) || ts.tool === 'hand') {
+    if ((e.pointerType === 'mouse' && e.button === 1) || (e.pointerType !== 'mouse' && ts.tool === 'hand')) {
       e.preventDefault();
       act = { k: 'pan', id: e.pointerId, x: e.clientX, y: e.clientY };
       capture(e.pointerId);
       return;
     }
-    startAction(e);
+    if (e.pointerType === 'mouse') startMouseAction(e);
+    else startAction(e);
+  }
+
+  function updatePointerType(e: PointerEvent) {
+    if (pointerType === e.pointerType) return;
+    pointerType = e.pointerType;
+    renderCursor();
+  }
+
+  function startMouseAction(e: PointerEvent) {
+    const hadEditing = !!editing;
+    editing?.finish();
+    const pv = pvFromEvent(e);
+    if (!pv) { setSel(null); return; }
+    measure(pv);
+    const [x, y] = toPage(pv, e.clientX, e.clientY);
+    const bb = sel?.pv === pv ? unionBBox(sel.els) : null, pad = 6 / zoom;
+    const inSelection = bb && (
+      (x >= bb[0] - pad && x <= bb[2] + pad && y >= bb[1] - pad && y <= bb[3] + pad) ||
+      Math.hypot(x - bb[2] - pad, y - bb[3] - pad) < 16 / zoom ||
+      Math.hypot(x - (bb[0] + bb[2]) / 2, y - (bb[1] - pad - 22 / zoom)) < 16 / zoom);
+    const hit = [...pv.page.els].reverse().find(el => !locked(el) && hitEl(el, x, y, 4 / zoom));
+    if (hit) {
+      if (sel?.pv !== pv || !sel.els.includes(hit)) setSel({ pv, els: [hit] });
+    } else if (!inSelection) {
+      setSel(null);
+      if (ts.tool === 'text' || ts.tool === 'tex') {
+        if (!hadEditing) startAction(e);
+        return;
+      }
+      if (ts.tool !== 'select') {
+        e.preventDefault();
+        act = { k: 'pan', id: e.pointerId, x: e.clientX, y: e.clientY };
+        capture(e.pointerId);
+        return;
+      }
+    }
+    // Mouse selection leaves the stylus tool ready for the next pen stroke.
+    startAction(e, 'select');
+  }
+
+  function editSelected() {
+    if (!sel || sel.els.length !== 1) return;
+    const { pv, els: [el] } = sel;
+    if (el.t !== 't' && el.t !== 'x') return;
+    setSel(null);
+    if (el.t === 'x') editTex(pv, el, el.x, el.y);
+    else editText(pv, el, el.x, el.y);
+  }
+
+  function onDoubleClick(e: MouseEvent) {
+    if (pointerType !== 'mouse' || e.button !== 0 || (e.target as HTMLElement).closest('.editing')) return;
+    // Pointer capture sends click/double-click to the viewport, not the page canvas.
+    const pv = pvFromEvent(e) ?? pvs.find(p => {
+      const r = p.el.getBoundingClientRect();
+      return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    });
+    if (!pv) return;
+    measure(pv);
+    const [x, y] = toPage(pv, e.clientX, e.clientY);
+    const hit = [...pv.page.els].reverse().find(el => !locked(el) && hitEl(el, x, y, 4 / zoom));
+    if (hit?.t !== 't' && hit?.t !== 'x') return;
+    e.preventDefault();
+    setSel({ pv, els: [hit] });
+    editSelected();
   }
 
   function startTouchPan(e: PointerEvent) {
@@ -833,7 +901,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     lastT = e.timeStamp;
   }
 
-  function startAction(e: PointerEvent) {
+  function startAction(e: PointerEvent, override?: Tool) {
     const hadEditing = !!editing;
     editing?.finish();
     const pv = pvFromEvent(e);
@@ -841,7 +909,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     const [x, y] = toPage(pv, e.clientX, e.clientY);
     // Stylus eraser end or barrel button erases regardless of the selected tool.
     const penErase = e.pointerType === 'pen' && (e.button === 5 || (e.buttons & 32) !== 0 || (e.buttons & 2) !== 0);
-    const tool: Tool = penErase ? 'eraser' : ts.tool;
+    const tool: Tool = override ?? (penErase ? 'eraser' : ts.tool);
     const id = e.pointerId;
 
     if (tool === 'text' || tool === 'tex') {
@@ -904,6 +972,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const schedule = (fn: () => void) => { cancelAnimationFrame(frame); frame = requestAnimationFrame(fn); };
 
   function onMove(e: PointerEvent) {
+    updatePointerType(e);
     if (e.pointerType === 'pen') {
       // If a barrel button was pressed in the air, tip contact/release arrive
       // as pointermove events rather than another pointerdown/pointerup pair.
@@ -1443,6 +1512,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   viewport.addEventListener('pointermove', onMove);
   viewport.addEventListener('pointerup', onUp);
   viewport.addEventListener('pointercancel', onUp);
+  viewport.addEventListener('dblclick', onDoubleClick);
   viewport.addEventListener('wheel', onWheel, { passive: false });
   viewport.addEventListener('scroll', onScroll, { passive: true });
   viewport.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1688,6 +1758,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     renderCursor();
   }
   function renderCursor() {
+    if (pointerType === 'mouse') { viewport.style.cursor = ts.tool === 'hand' ? 'grab' : 'default'; return; }
     const t = ts.tool;
     if (t !== 'pen' && t !== 'hl' && t !== 'eraser') { viewport.style.cursor = ''; return; }
     const color = t === 'eraser' ? '' : (t === 'hl' && ts.hl.mode === 'under' ? ts.ul.c : ts[t].c);
@@ -1700,7 +1771,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
   function renderOptbar() {
     renderCursor();
-    const t = ts.tool;
+    const t = sel ? 'select' : ts.tool;
     const kids: (Node | null)[] = [];
     const colorTool = t === 'pen' || t === 'hl' || t === 'shape' || t === 'text' || t === 'tex' ? t : null;
     const under = t === 'hl' && ts.hl.mode === 'under';
@@ -1754,6 +1825,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     if (t === 'hand') kids.push(h('span', { class: 'hint' }, 'Drag to move around. Pinch or Ctrl+scroll to zoom.'));
     if (t === 'select') {
       kids.push(
+        sel?.els.length === 1 && (sel.els[0].t === 'x' || sel.els[0].t === 't') ? h('button', { class: 'btn small', type: 'button', 'aria-label': 'Edit selected object', onclick: editSelected }, icon('pen', 16), 'Edit') : null,
         h('button', { class: 'btn small', type: 'button', disabled: !sel, onclick: duplicateSel }, icon('copy', 16), 'Duplicate'),
         h('button', { class: 'btn small', type: 'button', disabled: !sel, onclick: deleteSel }, icon('trash', 16), 'Delete'),
         sel && sel.els.some((e) => e.t === 'i') ? h('button', { class: 'btn small', type: 'button', onclick: () => setLock(true) }, icon('lock', 16), 'Lock picture') : null,

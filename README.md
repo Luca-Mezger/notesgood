@@ -146,6 +146,8 @@ from the hosted URL with Bubblewrap (Trusted Web Activity); see the deploy promp
   grid, convert to LaTeX or text), undo/redo.
 - **LaTeX**: the Σ tool places a rendered formula anywhere, including the PDF margin. Text boxes
   render `$...$` as inline maths.
+- **Mouse**: click to select formulas, text or pictures; drag to move them. Double-click text or a
+  formula to edit it. The mouse never draws or erases; your stylus tool stays ready for writing.
 - **Pages grow downward**: write near the bottom of a PDF page and it gains half a page of space below;
   trim it again from the margin menu.
 - **Handwriting → LaTeX / text**: lasso some handwriting and press *To LaTeX* or *To text*. This sends an

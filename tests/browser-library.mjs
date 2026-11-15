@@ -289,6 +289,7 @@ try {
   assert.equal(await evaluate("[...document.querySelectorAll('.optbar button')].some(b=>b.textContent==='Restore handwriting')"), true);
   await shortcut('m');
   await tap(await formulaPoint());
+  await click('[aria-label="Edit selected object"]');
   await until("!!document.querySelector('.tex-panel textarea')");
   await evaluate("(()=>{const t=document.querySelector('.tex-panel textarea');t.value='x^2 + y^2 = 2';t.dispatchEvent(new Event('input'))})()");
   await click('.tex-panel .primary');
@@ -340,6 +341,7 @@ try {
   assert.equal(await evaluate("document.querySelector('[aria-label=\"Undo (Ctrl+Z)\"]').disabled"), true, 'Never replay stale undo over edits from another device');
   await shortcut('m');
   await tap(await formulaPoint());
+  await click('[aria-label="Edit selected object"]');
   await until("!!document.querySelector('.tex-panel textarea')");
   await evaluate("[...document.querySelectorAll('.tex-panel button')].find(b=>b.textContent==='Restore handwriting').click()");
   assert.equal(await evaluate("document.querySelectorAll('.obj.tex').length"), 0);
@@ -575,6 +577,81 @@ try {
   assert.equal(exported.getPageCount(), pageOrder.length, 'Export includes every inserted page');
   for (const page of newPages) assert.deepEqual(exported.getPage(pageOrder.indexOf(page.id)).getSize(), { width: 595, height: 842 });
   console.log('PASS: PDF export includes all inserted pages at their intended positions and sizes.');
+
+  await click('[aria-label="Back to library"]');
+  await until("!!document.querySelector('.library')");
+  await chooseView('all');
+  await evaluate(`(async()=>{
+    const c=document.createElement('canvas');c.width=c.height=8;c.getContext('2d').fillRect(0,0,8,8);
+    const blob=await new Promise(r=>c.toBlob(r));
+    const d=await new Promise(r=>{const q=indexedDB.open('margin');q.onsuccess=()=>r(q.result)});
+    const t=d.transaction(['pages','blobs'],'readwrite'),s=t.objectStore('pages'),q=s.get('page-54');
+    q.onsuccess=()=>{const p=q.result;p.els.push(
+      {t:'x',id:'mouse-formula',x:120,y:100,c:'#123456',fs:22,src:'x^2'},
+      {t:'t',id:'mouse-text',x:120,y:200,c:'#123456',fs:20,text:'Click to select'},
+      {t:'i',id:'mouse-image',x:120,y:300,w:120,h:80,blob:'mouse-image-blob'}
+    );s.put(p)};
+    t.objectStore('blobs').put(blob,'mouse-image-blob');
+    await new Promise((r,j)=>{t.oncomplete=r;t.onerror=()=>j(t.error)});d.close();
+  })()`);
+  const mouseOriginal = await evaluate("readRecord('pages','page-54').then(p=>p.els)");
+  await click('[data-notebook="note-54"] .cover');
+  await until("!!document.querySelector('.obj.tex')&&!!document.querySelector('.obj.txt')");
+  const pagePoint = (x,y) => evaluate(`(()=>{const r=document.querySelector('.page').getBoundingClientRect(),z=Number(document.querySelector('.pages').style.getPropertyValue('--z'));return {x:r.x+${x}*z,y:r.y+${y}*z}})()`);
+  const mouseGesture = async (from,to=from,count=1) => {
+    assert.equal(await evaluate(`${JSON.stringify([from,to])}.every(p=>!!document.elementFromPoint(p.x,p.y)?.closest('.viewport'))`),true,'Mouse test gestures must land inside the editor viewport');
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',...from});
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',...from,button:'left',clickCount:count});
+    if(to!==from)await send('Input.dispatchMouseEvent',{type:'mouseMoved',...to,button:'left',buttons:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',...to,button:'left',clickCount:count});
+  };
+  const saveMousePage = async () => {
+    await evaluate("window.dispatchEvent(new Event('pagehide'))");
+    await until("readRecord('meta','history:note-54').then(Boolean)");
+    // Read after the transaction queued by pagehide, using the same stores.
+    return evaluate("readRecord('pages','page-54').then(p=>p.els)");
+  };
+  for (const key of ['p','h','e','s']) {
+    await toolKey(key);
+    const start=await pagePoint(400,360);
+    await mouseGesture(start,{x:start.x+35,y:start.y+35});
+  }
+  assert.deepEqual(await saveMousePage(),mouseOriginal,'Mouse drags must never draw, highlight, erase or create shapes');
+  await toolKey('p');
+  const formulaStart=await formulaPoint();
+  await mouseGesture(formulaStart);
+  assert.equal(await evaluate("document.querySelectorAll('.selbox').length"),1);
+  assert.equal(await evaluate("document.querySelector('[aria-label=\"Pen (P)\"]').getAttribute('aria-pressed')"),'true','Mouse selection must preserve the pen tool');
+  assert.equal(await evaluate("!!document.querySelector('.tex-panel')"),false,'A single click selects rather than opening the formula editor');
+  assert.equal(await cursor(),'default','The mouse uses an arrow, not a drawing cursor');
+  await mouseGesture(formulaStart,{x:formulaStart.x+70,y:formulaStart.y+35});
+  let mouseEls=await saveMousePage();
+  assert(mouseEls.find(e=>e.id==='mouse-formula').x>120,'The selected formula can be dragged immediately');
+  const imageStart=await pagePoint(180,340);
+  await mouseGesture(imageStart,{x:imageStart.x+60,y:imageStart.y+30});
+  mouseEls=await saveMousePage();
+  assert(mouseEls.find(e=>e.id==='mouse-image').x>120,'An unselected image is selected and moved in one mouse drag');
+  assert.equal(mouseEls.find(e=>e.id==='mouse-image').blob,'mouse-image-blob');
+  assert.deepEqual(mouseEls.filter(e=>e.t==='s'),mouseOriginal.filter(e=>e.t==='s'),'Selecting and moving objects must not add or erase handwriting');
+  await mouseGesture(await formulaPoint(),undefined,2);
+  await until("document.querySelector('.tex-panel textarea')?.value==='x^2'");
+  await click('.tex-head [aria-label="Cancel"]');
+  await mouseGesture(await pagePoint(170,210));
+  assert.equal(await evaluate("!!document.querySelector('.obj.txt.editing')"),false);
+  await click('[aria-label="Edit selected object"]');
+  await until("!!document.querySelector('.obj.txt.editing')");
+  await evaluate("document.querySelector('.obj.txt.editing').textContent='Corrected text'");
+  await mouseGesture(await pagePoint(400,360));
+  mouseEls=await saveMousePage();
+  assert.equal(mouseEls.find(e=>e.id==='mouse-text').text,'Corrected text');
+  assert.equal(await evaluate("document.querySelectorAll('.selbox').length"),0,'Clicking blank paper clears the selection');
+  const penStart=await pagePoint(400,360);
+  await penGesture(penStart,{x:penStart.x+40,y:penStart.y+40});
+  mouseEls=await saveMousePage();
+  assert.equal(mouseEls.filter(e=>e.t==='s').length,2,'The stylus still draws immediately after mouse selection without reselecting the pen tool');
+  await shortcut('z',{ctrlKey:true});
+  assert.equal((await saveMousePage()).filter(e=>e.t==='s').length,1,'The new pen stroke remains undoable');
+  console.log('PASS: mouse never draws or erases; click selects formulas, text and pictures, drag moves them, double-click/Edit opens text, and the pen remains ready to write.');
 
   assert.deepEqual(exceptions, [], 'No uncaught exceptions while restoring positions');
   console.log('PASS: invalid saved positions fall back safely without blocking the PDF.');
