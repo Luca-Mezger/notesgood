@@ -179,7 +179,8 @@ try {
   assert.deepEqual(exceptions, [], 'No uncaught browser exceptions');
   console.log('PASS: responsive layout, notebook/page/blob retention, no connection to private sync.');
 
-  const pdf = await PDFDocument.create(); pdf.addPage([595, 842]);
+  const pdf = await PDFDocument.create();
+  for (let i = 0; i < 8; i++) pdf.addPage([595, 842]);
   const encoded = Buffer.from(await pdf.save()).toString('base64');
   await evaluate(`(()=>{
     const bytes=Uint8Array.from(atob(${JSON.stringify(encoded)}),c=>c.charCodeAt(0));
@@ -191,6 +192,74 @@ try {
   await until("!!document.querySelector('.editor')");
   assert.equal(await evaluate("(async()=>{const id=decodeURIComponent(location.hash.slice(4));return (await readRecord('notebooks',id)).folder})()"), 'Linear algebra');
   console.log('PASS: a PDF dropped onto a folder imports into that folder.');
+
+  const pdfId = await evaluate('decodeURIComponent(location.hash.slice(4))');
+  const readView = () => evaluate(`(()=>{const v=document.querySelector('.viewport');return {top:v.scrollTop,left:v.scrollLeft,zoom:Number(document.querySelector('.pages').style.getPropertyValue('--z'))}})()`);
+  const assertView = async (expected) => {
+    const actual = await readView();
+    assert(Math.abs(actual.top - expected.top) < 2, `Vertical position changed: ${JSON.stringify({ actual, expected })}`);
+    assert(Math.abs(actual.left - expected.left) < 2, 'Horizontal position changed');
+    assert(Math.abs(actual.zoom - expected.zoom) < 0.0001, 'Zoom changed');
+  };
+  const openPdf = async () => {
+    await chooseView('all');
+    await click(`[data-notebook="${pdfId}"] .cover`);
+    await until("document.querySelectorAll('.page').length===8");
+  };
+  await send('Emulation.setDeviceMetricsOverride', { width: 1100, height: 800, deviceScaleFactor: 1, mobile: false });
+  await click('.zoom');
+  const expected = await evaluate(`(()=>{
+    for(let i=0;i<2;i++)document.dispatchEvent(new KeyboardEvent('keydown',{key:'+',ctrlKey:true,bubbles:true}));
+    const v=document.querySelector('.viewport');
+    v.scrollTop=document.querySelectorAll('.page')[5].offsetTop+157;v.scrollLeft=180;
+    const state={top:v.scrollTop,left:v.scrollLeft,zoom:Number(document.querySelector('.pages').style.getPropertyValue('--z'))};
+    document.querySelector('[aria-label="Back to library"]').click();
+    return state;
+  })()`);
+  assert(expected.top > 2000 && expected.left > 0, 'Fixture must really scroll and pan');
+  await until("!!document.querySelector('.library')");
+  await chooseView('all');
+  await click('[data-notebook="note-0"] .cover');
+  await until("!!document.querySelector('.editor')");
+  assert.equal((await readView()).top, 0, 'Another notebook must not inherit this PDF position');
+  await click('[aria-label="Back to library"]');
+  await until("!!document.querySelector('.library')");
+  await openPdf(); await assertView(expected);
+  console.log('PASS: leaving immediately after scrolling restores the exact PDF position, pan and zoom; notebooks keep separate positions.');
+
+  await send('Page.reload');
+  await until("document.querySelectorAll('.page').length===8");
+  await assertView(expected);
+  const hiddenPosition = await evaluate(`(()=>{
+    const v=document.querySelector('.viewport');v.scrollTop+=123;
+    window.dispatchEvent(new Event('pagehide'));
+    return {top:v.scrollTop,left:v.scrollLeft,zoom:Number(document.querySelector('.pages').style.getPropertyValue('--z'))};
+  })()`);
+  await send('Page.reload');
+  await until("document.querySelectorAll('.page').length===8");
+  await assertView(hiddenPosition);
+  console.log('PASS: page reload and closing/backgrounding the page retain the saved reading position.');
+
+  const shiftedPageHeight = await evaluate("document.querySelectorAll('.page')[1].offsetTop-document.querySelectorAll('.page')[0].offsetTop");
+  await click('[aria-label="Back to library"]');
+  await until("!!document.querySelector('.library')");
+  await evaluate(`(async()=>{
+    const d=await new Promise(r=>{const q=indexedDB.open('margin');q.onsuccess=()=>r(q.result)});
+    const t=d.transaction('notebooks','readwrite'),store=t.objectStore('notebooks'),q=store.get(${JSON.stringify(pdfId)});
+    q.onsuccess=()=>{const nb=q.result;nb.pages.push(nb.pages.shift());store.put(nb)};
+    await new Promise((r,j)=>{t.oncomplete=r;t.onerror=()=>j(t.error)});d.close();
+  })()`);
+  await openPdf();
+  await assertView({ ...hiddenPosition, top: hiddenPosition.top - shiftedPageHeight });
+  console.log('PASS: reordering earlier pages still restores the same document point by page identity.');
+
+  await click('[aria-label="Back to library"]');
+  await until("!!document.querySelector('.library')");
+  await evaluate(`localStorage.setItem('notesgood.position.'+${JSON.stringify(pdfId)},'invalid saved data')`);
+  await openPdf();
+  assert.equal((await readView()).top, 0, 'Invalid saved state must fall back to the first page');
+  assert.deepEqual(exceptions, [], 'No uncaught exceptions while restoring positions');
+  console.log('PASS: invalid saved positions fall back safely without blocking the PDF.');
 } finally {
   ws?.close(); browser.kill('SIGTERM');
   await new Promise((resolve) => server.close(resolve));

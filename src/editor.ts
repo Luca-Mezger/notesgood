@@ -95,6 +95,7 @@ interface PV {
   nodes: Map<string, HTMLElement>; built: boolean; lines: TextLine[] | null;
 }
 interface Op { page: Page; removed: [number, El][]; added: [number, El][] }
+interface ReadingPosition { page: string; index: number; x: number; y: number; zoom: number }
 
 type Action =
   | { k: 'draw'; id: number; pv: PV; tool: 'pen' | 'hl'; c: string; s: number; baseS: number; pts: number[]; drawn: number; lp: number; straight: boolean; snap: Snap | null; hx: number; hy: number; timer: number; ruler: boolean }
@@ -127,7 +128,15 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const undo: Op[] = [], redo: Op[] = [];
   const dirty = new Set<Page>();
   const thumbDirty = new Set<Page>();
-  let saveTimer = 0, zoomTimer = 0, closed = false;
+  let saveTimer = 0, zoomTimer = 0, positionTimer = 0, closed = false;
+  let positionReady = false;
+  const positionKey = 'notesgood.position.' + nbId;
+  let savedPosition: ReadingPosition | null = null;
+  try {
+    const value = JSON.parse(localStorage.getItem(positionKey) ?? 'null');
+    if (value && typeof value.page === 'string' && Number.isInteger(value.index) && value.index >= 0 &&
+      Number.isFinite(value.x) && Number.isFinite(value.y) && Number.isFinite(value.zoom) && value.zoom > 0) savedPosition = value;
+  } catch { /* A missing or damaged position falls back to the normal opening view. */ }
 
   // ---------- DOM ----------
   const pagesEl = h('div', { class: 'pages' });
@@ -381,7 +390,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     renderThumb(t.querySelector('canvas')!, pages[i], nb, 132 * Math.min(dpr, 2));
   }
 
-  function updateCurrent() {
+  function visiblePageIndex() {
     // Page under a line 40% down the viewport (binary search over page offsets).
     const mid = viewport.scrollTop + viewport.clientHeight * 0.4;
     let lo = 0, hi = pvs.length - 1;
@@ -390,6 +399,11 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       const el = pvs[m].el;
       if (el.offsetTop + el.offsetHeight < mid) lo = m + 1; else hi = m;
     }
+    return lo;
+  }
+
+  function updateCurrent() {
+    const lo = visiblePageIndex();
     if (lo !== curIdx || !thumbsList.querySelector('.current')) {
       thumbsList.querySelector('.current')?.classList.remove('current');
       curIdx = lo;
@@ -398,6 +412,37 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       if (ts.sidebar) t?.scrollIntoView({ block: 'nearest' });
     }
     pageLabel.textContent = `${curIdx + 1} / ${pages.length}`;
+  }
+
+  function savePosition() {
+    clearTimeout(positionTimer);
+    if (!positionReady || closed || !view.isConnected || !pvs.length) return;
+    const index = visiblePageIndex(), pv = pvs[index];
+    const vr = viewport.getBoundingClientRect(), pr = pv.el.getBoundingClientRect();
+    // Anchor a document point, so inserted/reordered pages and a different window
+    // size do not turn a saved scroll offset into a different place in the PDF.
+    const position: ReadingPosition = {
+      page: pv.page.id, index, zoom,
+      x: (vr.left + viewport.clientWidth * 0.5 - pr.left) / zoom,
+      y: (vr.top + viewport.clientHeight * 0.4 - pr.top) / zoom,
+    };
+    try { localStorage.setItem(positionKey, JSON.stringify(position)); }
+    catch { /* Reading and editing still work when browser storage is unavailable. */ }
+  }
+
+  function schedulePositionSave() {
+    if (!positionReady || closed) return;
+    clearTimeout(positionTimer);
+    positionTimer = window.setTimeout(savePosition, 200);
+  }
+
+  function restorePosition() {
+    if (!savedPosition) return;
+    const pv = pvs.find((p) => p.page.id === savedPosition!.page) ?? pvs[Math.min(savedPosition.index, pvs.length - 1)];
+    const vr = viewport.getBoundingClientRect(), pr = pv.el.getBoundingClientRect();
+    viewport.scrollLeft += pr.left + savedPosition.x * zoom - vr.left - viewport.clientWidth * 0.5;
+    viewport.scrollTop += pr.top + savedPosition.y * zoom - vr.top - viewport.clientHeight * 0.4;
+    updateCurrent();
   }
 
   function scrollToPage(i: number) {
@@ -438,6 +483,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     updateSelBox();
     clearTimeout(zoomTimer);
     zoomTimer = window.setTimeout(() => { for (const p of pvs) if (p.visible) renderPV(p); }, 140);
+    schedulePositionSave();
   }
 
   // ---------- live overlay ----------
@@ -1298,6 +1344,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
 
   let scrollRaf = 0;
   function onScroll() {
+    schedulePositionSave();
     if (scrollRaf) return;
     scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; updateCurrent(); });
   }
@@ -1603,7 +1650,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       else if (key === 'r') toggleRuler();
     }
   }
-  const onHide = () => { if (document.visibilityState === 'hidden') flush().then(() => { if (syncEnabled()) sync(true); }); };
+  const onHide = () => { if (document.visibilityState === 'hidden') { savePosition(); flush().then(() => { if (syncEnabled()) sync(true); }); } };
+  const onPageHide = () => { savePosition(); void flush(); };
   const pushTimer = window.setInterval(async () => { if (syncEnabled() && navigator.onLine && (dirty.size || (await db.dirty()).length)) { await flush(); sync(true); } }, 45000);
   const ro = new ResizeObserver(() => { sizeLive(); });
   document.addEventListener('keydown', onKey);
@@ -1611,7 +1659,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   viewport.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
   viewport.addEventListener('drop', onDrop);
   document.addEventListener('visibilitychange', onHide);
-  window.addEventListener('pagehide', flush);
+  window.addEventListener('pagehide', onPageHide);
   ro.observe(stage);
 
   // ---------- start ----------
@@ -1620,23 +1668,29 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   syncToggles();
   syncUndo();
   sizeLive();
-  zoom = fitZoom(true);
+  zoom = savedPosition ? Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, savedPosition.zoom)) : fitZoom(true);
   pagesEl.style.setProperty('--z', String(zoom));
   zoomBtn.textContent = Math.round(zoom * 100) + '%';
   buildPages();
+  restorePosition();
+  positionReady = true;
   document.fonts?.ready.then(() => { for (const pv of pvs) if (pv.built) measure(pv); });
 
   return {
     async close() {
       if (closed) return;
+      savePosition();
       closed = true;
+      clearTimeout(positionTimer);
+      clearTimeout(zoomTimer);
+      cancelAnimationFrame(scrollRaf);
       editing?.finish();
       cancelAction();
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('paste', onPaste);
       offImage();
       document.removeEventListener('visibilitychange', onHide);
-      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('pagehide', onPageHide);
       clearInterval(pushTimer);
       ro.disconnect();
       io.disconnect();
