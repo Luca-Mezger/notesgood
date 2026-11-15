@@ -88,6 +88,12 @@ A Play-Store-style APK can be produced later by wrapping `dist/` with Capacitor;
 chrome: `chromium --app=http://localhost:5173`. In Firefox on X11, pen pressure needs
 `MOZ_USE_XINPUT2=1`; on Wayland it works out of the box.
 
+On Hyprland/XWayland, `scripts/notesgood-pen.py` bridges the integrated pen's eraser
+button to the eraser and its second button to the lasso. It needs Python with
+`python-xlib` and a window class of `notesgood`. Run it in the graphical session
+(or as a user service). It only targets the focused Notesgood window; after
+releasing the lasso button, the selection stays movable for the next pen gesture.
+
 ## Sync between devices
 
 Notes sync through a small endpoint you host: `server/sync.php` for PHP hosting (Hostinger shared
