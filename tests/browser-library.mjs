@@ -301,7 +301,13 @@ try {
   assert((await selectionPosition()).x > initialSelection.x + 100);
   await penGesture({ x: point.x + 300, y: point.y + 220 });
   assert.equal(await evaluate("document.querySelectorAll('.selbox').length"), 0);
-  console.log('PASS: pen selection stays marked across three separate moves and clears when tapping outside.');
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"), 'pen');
+  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'l',bubbles:true}))`);
+  await penGesture({ x: point.x + 300, y: point.y + 220 }, { x: point.x + 340, y: point.y + 250 });
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"), 'select', 'Releasing an empty lasso gesture must keep the lasso active');
+  await penGesture({ x: point.x + 300, y: point.y + 220 });
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"), 'pen');
+  console.log('PASS: lasso release keeps the tool/selection active across repeated moves; only tapping blank space returns to the pen.');
 
   const toolKey = (key) => evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true}))`);
   const cursor = () => evaluate("decodeURIComponent(getComputedStyle(document.querySelector('.viewport')).cursor)");

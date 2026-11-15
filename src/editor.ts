@@ -1262,7 +1262,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         const hit = [...els].reverse().find((el) => !locked(el) && hitEl(el, p[0], p[1], 6 / zoom));
         picked = hit ? [hit] : [];
       } else picked = els.filter((el) => !locked(el) && elInPoly(el, p));
-      setSel({ pv: a.pv, els: picked });
+      if (len * zoom < 8 && !picked.length) setTool('pen');
+      else setSel({ pv: a.pv, els: picked });
     } else if (a.k === 'xform') {
       if (!a.moved || !sel) return;
       redrawInk(a.pv);
