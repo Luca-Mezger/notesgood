@@ -244,7 +244,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     for (const pv of pvs) pv.job?.cancel();
     pvOf.clear();
     selBox.remove();
-    sel = null;
+    setSel(null);
     pvs = pages.map((page, i) => {
       const bg = h('canvas', { class: 'bg' }), pics = h('canvas', { class: 'pics' }), ink = h('canvas', { class: 'ink' }), objs = h('div', { class: 'objs' });
       const el = h('div', { class: 'page', 'data-i': i }, bg, pics, ink, objs);

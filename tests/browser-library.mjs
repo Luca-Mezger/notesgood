@@ -651,6 +651,13 @@ try {
   assert.equal(mouseEls.filter(e=>e.t==='s').length,2,'The stylus still draws immediately after mouse selection without reselecting the pen tool');
   await shortcut('z',{ctrlKey:true});
   assert.equal((await saveMousePage()).filter(e=>e.t==='s').length,1,'The new pen stroke remains undoable');
+  await mouseGesture(await formulaPoint());
+  assert.equal(await evaluate("!!document.querySelector('[aria-label=\"Edit selected object\"]')"),true);
+  await click('.toolbar [aria-label="Add blank page"]');
+  await evaluate("[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Blank page after').click()");
+  await until("document.querySelectorAll('.page').length===2");
+  assert.equal(await evaluate("!!document.querySelector('[aria-label=\"Edit selected object\"]')"),false,'Rebuilding pages clears mouse selection controls');
+  assert.equal(await evaluate("!!document.querySelector('.optbar [aria-label=\"Thickness\"]')"),true,'The pen controls return after mouse selection is cleared');
   console.log('PASS: mouse never draws or erases; click selects formulas, text and pictures, drag moves them, double-click/Edit opens text, and the pen remains ready to write.');
 
   assert.deepEqual(exceptions, [], 'No uncaught exceptions while restoring positions');
