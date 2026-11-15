@@ -55,7 +55,6 @@ class PenState:
         self.hypr = hypr
         self.erasing = None
         self.tool = None
-        self.selecting = None
         self.pending = {}
 
     def restore(self, address, key='p'):
@@ -83,7 +82,9 @@ class PenState:
             return
         self.tool = tool
         if self.erasing:
-            self.restore(self.erasing, 'l' if self.selecting == self.erasing else 'p')
+            # The editor owns lasso state and can end it on a blank tap. Never
+            # restore a remembered lasso mode after erasing or pen movement.
+            self.restore(self.erasing)
             self.erasing = None
         if button not in (2, 3):
             return
@@ -91,15 +92,14 @@ class PenState:
             address = self.hypr.active()
             if not address:
                 return
-            self.selecting = self.hypr.switch('l', address)
-            if self.selecting:
+            if self.hypr.switch('l', address):
                 self.pending.pop(address, None)
         # Releasing the button or tip never clears a selection. The editor
         # handles repeated moves and deselects when the user taps outside it.
 
     def close(self):
-        for address in {self.erasing, self.selecting} - {None}:
-            self.hypr.switch('p', address)
+        if self.erasing:
+            self.hypr.switch('p', self.erasing)
 
 
 def pen_devices(devices):

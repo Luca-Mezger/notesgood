@@ -39,11 +39,27 @@ class PenTests(unittest.TestCase):
             self.state.handle('stylus', 'release', 2)
         self.assertEqual(self.hypr.switch.call_args_list, [call('l', '0x123'), call('l', '0x123')])
 
-    def test_eraser_during_selection_returns_to_lasso(self):
+    def test_eraser_after_lasso_returns_to_pen_without_reactivating_lasso(self):
         self.state.handle('stylus', 'press', 2)
         self.state.handle('eraser', 'motion')
         self.state.handle('stylus', 'motion')
-        self.assertEqual(self.hypr.switch.call_args_list, [call('l', '0x123'), call('e', '0x123'), call('l', '0x123')])
+        self.assertEqual(self.hypr.switch.call_args_list, [call('l', '0x123'), call('e', '0x123'), call('p', '0x123')])
+
+    def test_after_blank_tap_only_a_new_lasso_button_press_can_select_again(self):
+        self.state.handle('stylus', 'press', 2)
+        self.state.handle('stylus', 'release', 2)
+        # The editor switches to pen when the user taps blank space.
+        self.hypr.switch.reset_mock()
+        for _ in range(3):
+            for kind, detail in [('device', 0), ('motion', 0), ('press', 1), ('release', 1), ('release', 2)]:
+                self.state.handle('stylus', kind, detail)
+            self.state.reconcile()
+        self.hypr.switch.assert_not_called()
+        self.state.handle('eraser', 'device')
+        self.state.handle('stylus', 'device')
+        self.assertEqual(self.hypr.switch.call_args_list, [call('e', '0x123'), call('p', '0x123')])
+        self.state.handle('stylus', 'press', 2)
+        self.hypr.switch.assert_called_with('l', '0x123')
 
     def test_new_eraser_press_cancels_a_deferred_return_to_pen(self):
         self.state.pending['0x123'] = 'p'
