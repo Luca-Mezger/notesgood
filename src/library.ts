@@ -94,9 +94,8 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
         h('button', { class: 'btn primary', type: 'button', onclick: newNotebook }, icon('plus', 18), 'New notebook'),
         syncBtn, libMore),
       fileInput, dirInput),
-    navigation, importStatus,
+    navigation,
     h('div', { class: 'library-tools' },
-      h('p', { class: 'hint' }, 'Drag notebooks onto a folder to move them. Drop onto a breadcrumb to move back.'),
       h('label', { class: 'sort-controls' }, h('span', null, 'Sort by'), sortSelect, sortDirection)),
     folderSection, earlierImports, notebookHeading, grid);
 
@@ -179,6 +178,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
   }
 
   async function goodnotesHelp() {
+    if (!importMessage.textContent) setImportStatus(autoEnabled() ? 'Automatic import is on.' : 'Automatic import is paused.');
     const space = h('select', { class: 'field', onchange: () => localStorage.setItem('goodnotes.margin', space.value) },
       ...[['0', 'Keep the original page layout'], ['0.5', 'Add half a page of writing space'], ['1', 'Add a full page of writing space']].map(([value, label]) =>
         h('option', { value, selected: Number(value) === goodnotesMargin() }, label)));
@@ -191,7 +191,8 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
         (window as any).showDirectoryPicker ? h('button', { class: 'btn', type: 'button', onclick: watchBackupFolder }, 'Watch a backup folder…') : null),
       h('p', null, 'Goodnotes Web, Windows, or Android: open a notebook → Share → Export as PDF. You can export notebooks one at a time; a full-library export is not required.'),
       h('p', null, 'On iPad or Mac, select documents or folders in the library → Export → PDF. A PDF folder export can be imported as a ZIP.'),
-      h('p', { class: 'hint' }, 'On this Nix desktop, PDFs downloaded from the Goodnotes app into Downloads are picked up automatically while the library is open. Other downloads and files prepared for Goodnotes are ignored. You can pause this in the library.'),
+      importStatus,
+      h('p', { class: 'hint' }, 'On this Nix desktop, PDFs downloaded from the Goodnotes app into Downloads are picked up automatically while the library is open. Other downloads and files prepared for Goodnotes are ignored.'),
       h('p', { class: 'hint' }, 'A watched folder must contain PDF exports, for example a local copy of a Goodnotes Auto Backup folder. Your browser may ask you to reconnect it after restarting.'),
       h('p', { class: 'hint' }, 'Native .goodnotes files need to be exported as PDF first. Existing handwriting stays visible in the PDF, but cannot be erased as individual strokes.'));
     await modal({ title: 'Import from Goodnotes', body, ok: 'Done', cancel: null });
@@ -308,6 +309,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
   function renderNavigation() {
     folders = folderPaths([...folders, ...notebooks.map((nb) => nb.folder)]);
     const crumbs = h('nav', { class: 'breadcrumbs', 'aria-label': 'Folder path' });
+    crumbs.hidden = filter.k === 'folder' && !filter.name;
     const crumb = (label: string, path: string, current: boolean) => {
       const button = h('button', { type: 'button', class: 'breadcrumb', 'aria-current': current ? 'page' : null,
         onclick: () => navigate({ k: 'folder', name: path }) }, label);
@@ -324,8 +326,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       navigate(k === 'all' || k === 'fav' ? { k } : { k: 'folder', name: '' });
     } }, ...[['folder', 'Documents'], ['all', 'All notebooks'], ['fav', 'Favourites']].map(([value, label]) => h('option', { value, selected: filter.k === value }, label)));
     navigation.replaceChildren(crumbs, h('div', { class: 'library-title-row' },
-      h('div', null, h('h2', { class: 'library-title' }, filter.k === 'folder' ? folderName(filter.name) || 'Documents' : filter.k === 'all' ? 'All notebooks' : 'Favourites'),
-        h('p', { class: 'muted' }, filter.k === 'folder' && filter.name ? 'Your notebooks and subfolders' : 'Your notes, organised your way')),
+      h('h2', { class: 'library-title' }, filter.k === 'folder' ? folderName(filter.name) || 'Documents' : filter.k === 'all' ? 'All notebooks' : 'Favourites'),
       h('div', { class: 'library-view-actions' }, viewSelect,
         h('button', { class: 'btn', type: 'button', onclick: addFolder }, icon('plus', 18), 'New folder'))));
   }

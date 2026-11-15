@@ -199,7 +199,7 @@ See [Goodnotes' export instructions](https://support.goodnotes.com/hc/en-us/arti
 
 **On the installed Nix desktop:** completed PDF downloads from the dedicated Goodnotes browser app
 are picked up automatically from Downloads while Notesgood's library is open, checked every minute.
-Pause or resume this from the library. The local helper uses Node 24 and reads a private snapshot of
+Pause, resume, or check imports under **From Goodnotes**. The local helper uses Node 24 and reads a private snapshot of
 the Fleet Goodnotes profile's download history; it imports only completed PDFs actually downloaded
 from `web.goodnotes.com`. Unrelated downloads and PDFs merely prepared for Goodnotes are ignored.
 The original files are kept. A changed export becomes a new notebook, leaving existing annotations intact.
