@@ -92,7 +92,8 @@ On Hyprland/XWayland, `scripts/notesgood-pen.py` bridges the integrated pen's er
 button to the eraser and its second button to the lasso. It needs Python with
 `python-xlib` and a window class of `notesgood`. Run it in the graphical session
 (or as a user service). It only targets the focused Notesgood window; after
-releasing the lasso button, the selection stays movable for the next pen gesture.
+releasing the lasso button, the selection stays marked and can be moved repeatedly
+until you tap outside it.
 
 ## Sync between devices
 

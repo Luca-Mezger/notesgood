@@ -56,8 +56,6 @@ class PenState:
         self.erasing = None
         self.tool = None
         self.selecting = None
-        self.selection_button_down = False
-        self.selection_move_started = False
         self.pending = {}
 
     def restore(self, address, key='p'):
@@ -87,29 +85,17 @@ class PenState:
         if self.erasing:
             self.restore(self.erasing, 'l' if self.selecting == self.erasing else 'p')
             self.erasing = None
-        if button == 1:
-            if kind == 'press' and self.selecting and not self.selection_button_down:
-                self.selection_move_started = True
-            elif kind == 'release' and self.selecting and self.selection_move_started:
-                self.restore(self.selecting)
-                self.selecting = None
-                self.selection_move_started = False
-            return
         if button not in (2, 3):
             return
         if kind == 'press':
             address = self.hypr.active()
             if not address:
                 return
-            if self.selecting != address:
-                self.selecting = self.hypr.switch('l', address)
+            self.selecting = self.hypr.switch('l', address)
             if self.selecting:
-                self.selection_button_down = True
-                self.selection_move_started = False
-        elif kind == 'release' and self.selecting:
-            # Keep the selection movable after releasing the button. The next
-            # pen gesture moves it, then returns to writing.
-            self.selection_button_down = False
+                self.pending.pop(address, None)
+        # Releasing the button or tip never clears a selection. The editor
+        # handles repeated moves and deselects when the user taps outside it.
 
     def close(self):
         for address in {self.erasing, self.selecting} - {None}:

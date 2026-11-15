@@ -97,7 +97,7 @@ try {
       for(let n=0;n<count;n++,i++){
         const id='note-'+i;
         t.objectStore('notebooks').put({id,title:'Note '+(i+1),folder,fav:i===0,created:1000+i,updated:2000-i,pages:['page-'+i],margin:0,marginTpl:'blank',tpl:'lined',paper:'#fff',importHash:'hash-'+i,...(folder==='Goodnotes'?{}:{importSourceId:'inbox/'+folder+'/Note '+i+'.pdf'})});
-        t.objectStore('pages').put({id:'page-'+i,nb:id,w:595,h:842,bg:{k:'paper',tpl:'lined',color:'#fff'},els:[{t:'s',id:'ink-'+i,k:'pen',c:'#123456',s:2,p:new Float32Array([10,20,.8,30,40,.9]),bb:[10,20,30,40]}]});
+        t.objectStore('pages').put({id:'page-'+i,nb:id,w:595,h:842,bg:{k:'paper',tpl:'lined',color:'#fff'},els:[{t:'s',id:'ink-'+i,k:'pen',c:'#123456',s:2,p:new Float32Array([10,20,.8,30,40,.9]),bb:[8,18,32,42]}]});
       }
     }
     t.objectStore('blobs').put(new Blob(['unchanged PDF and image bytes']),'sentinel');
@@ -278,6 +278,46 @@ try {
   await until("!document.querySelector('.page .katex')");
   assert.equal(await evaluate('window.recognitionRequests.length'), 1);
   console.log('PASS: selected ink converts through mocked OpenAI vision to rendered LaTeX; undo restores the ink without a second API request.');
+
+  const penGesture = async (from, to = from) => {
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...from, button: 'left', pointerType: 'pen', force: 0.5, clickCount: 1 });
+    if (to !== from) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...to, button: 'left', buttons: 1, pointerType: 'pen', force: 0.5 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...to, button: 'left', pointerType: 'pen', force: 0, clickCount: 1 });
+  };
+  await penGesture(point);
+  await until("!!document.querySelector('.selbox')");
+  const selectionPosition = () => evaluate("(()=>{const r=document.querySelector('.selbox').getBoundingClientRect();return {x:r.x,y:r.y}})()");
+  const initialSelection = await selectionPosition();
+  let from = point;
+  for (const [dx, dy] of [[100, 60], [70, 50], [-30, 20]]) {
+    const to = { x: from.x + dx, y: from.y + dy };
+    const previous = await selectionPosition();
+    await penGesture(from, to);
+    assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"), 'select');
+    const next = await selectionPosition();
+    assert(Math.abs(next.x - previous.x - dx) < 2 && Math.abs(next.y - previous.y - dy) < 2, 'Every pen drag must move the still-marked selection: ' + JSON.stringify({ previous, next, dx, dy, from, to }));
+    from = to;
+  }
+  assert((await selectionPosition()).x > initialSelection.x + 100);
+  await penGesture({ x: point.x + 300, y: point.y + 220 });
+  assert.equal(await evaluate("document.querySelectorAll('.selbox').length"), 0);
+  console.log('PASS: pen selection stays marked across three separate moves and clears when tapping outside.');
+
+  const toolKey = (key) => evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true}))`);
+  const cursor = () => evaluate("decodeURIComponent(getComputedStyle(document.querySelector('.viewport')).cursor)");
+  await toolKey('p');
+  assert.match(await cursor(), /data:image\/svg\+xml/);
+  assert.doesNotMatch(await cursor(), /crosshair/);
+  await evaluate(`document.querySelector('.optbar .swatch[aria-label="Colour #d92d20"]').click()`);
+  assert.match(await cursor(), /fill=["']#d92d20["']/);
+  await toolKey('h');
+  await evaluate(`document.querySelector('.optbar .swatch[aria-label="Colour #7cc4ff"]').click()`);
+  assert.match(await cursor(), /fill=["']#7cc4ff["']/);
+  await toolKey('e');
+  assert.match(await cursor(), /fill=["']none["']/);
+  await toolKey('v');
+  assert.equal(await cursor(), 'grab');
+  console.log('PASS: pen and highlighter have colored dot cursors; eraser has a small ring, and pan keeps its grab cursor.');
 
   await click('[aria-label="Back to library"]');
   await until("!!document.querySelector('.library')");

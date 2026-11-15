@@ -1149,12 +1149,6 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     schedule(() => {
       if (a.dirty) { a.dirty = false; redrawInk(a.pv); }
       clearLive();
-      aimLive(a.pv);
-      lctx.strokeStyle = 'rgba(0,0,0,0.45)';
-      lctx.lineWidth = 1 / zoom;
-      lctx.beginPath();
-      lctx.arc(x, y, r, 0, Math.PI * 2);
-      lctx.stroke();
     });
   }
 
@@ -1564,8 +1558,21 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       return b;
     }));
     viewport.dataset.tool = ts.tool;
+    renderCursor();
+  }
+  function renderCursor() {
+    const t = ts.tool;
+    if (t !== 'pen' && t !== 'hl' && t !== 'eraser') { viewport.style.cursor = ''; return; }
+    const color = t === 'eraser' ? '' : (t === 'hl' && ts.hl.mode === 'under' ? ts.ul.c : ts[t].c);
+    const fill = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(color) ? color : '#111';
+    const shape = t === 'eraser'
+      ? '<circle cx="12" cy="12" r="5" fill="none" stroke="white" stroke-width="3"/><circle cx="12" cy="12" r="5" fill="none" stroke="#555" stroke-width="1.2"/>'
+      : `<circle cx="12" cy="12" r="3.25" fill="white" stroke="#555" stroke-width=".5"/><circle cx="12" cy="12" r="2.5" fill="${fill}"/>`;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">${shape}</svg>`;
+    viewport.style.cursor = `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, default`;
   }
   function renderOptbar() {
+    renderCursor();
     const t = ts.tool;
     const kids: (Node | null)[] = [];
     const colorTool = t === 'pen' || t === 'hl' || t === 'shape' || t === 'text' || t === 'tex' ? t : null;

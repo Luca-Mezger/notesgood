@@ -28,9 +28,16 @@ class PenTests(unittest.TestCase):
             for kind, detail in [('press', button), ('press', 1), ('release', button), ('release', 1)]:
                 self.state.handle('stylus', kind, detail)
             self.hypr.switch.assert_called_once_with('l', '0x123')
-            self.state.handle('stylus', 'press', 1)
-            self.state.handle('stylus', 'release', 1)
-            self.assertEqual(self.hypr.switch.call_args_list, [call('l', '0x123'), call('p', '0x123')])
+            for _ in range(4):
+                self.state.handle('stylus', 'press', 1)
+                self.state.handle('stylus', 'release', 1)
+            self.hypr.switch.assert_called_once_with('l', '0x123')
+
+    def test_lasso_can_be_reactivated_after_manually_switching_to_pen(self):
+        for _ in range(2):
+            self.state.handle('stylus', 'press', 2)
+            self.state.handle('stylus', 'release', 2)
+        self.assertEqual(self.hypr.switch.call_args_list, [call('l', '0x123'), call('l', '0x123')])
 
     def test_eraser_during_selection_returns_to_lasso(self):
         self.state.handle('stylus', 'press', 2)
