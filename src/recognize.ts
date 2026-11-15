@@ -1,22 +1,53 @@
 // Handwriting recognition: renders a selection of strokes to an image and asks a vision model for the
-// LaTeX (or plain text). Uses the Claude API directly from the browser with a key the user enters in
+// LaTeX (or plain text). Calls the selected provider directly with a key the user enters in
 // Settings; nothing passes through any server of ours.
 import { drawInk, unionBBox } from './render';
 import type { El } from './types';
 
-export interface RecogConfig { key: string; model: string }
+export type RecogProvider = 'claude' | 'openai';
+export interface RecogConfig { provider: RecogProvider; key: string; model: string }
+type ProviderConfig = Pick<RecogConfig, 'key' | 'model'>;
+interface StoredConfig { provider: RecogProvider; claude: ProviderConfig; openai: ProviderConfig }
 const CFG = 'margin.recog';
-export const RECOG_MODELS: [string, string][] = [
-  ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (recommended)'],
-  ['claude-haiku-5-5', 'Claude Haiku 5.5 (faster, cheaper)'],
-  ['claude-opus-5-5', 'Claude Opus 5.5 (most careful)'],
-];
+export const RECOG_MODELS: Record<RecogProvider, [string, string][]> = {
+  claude: [
+    ['claude-sonnet-5-5', 'Claude Sonnet 5.5 (recommended)'],
+    ['claude-haiku-5-5', 'Claude Haiku 5.5 (faster, cheaper)'],
+    ['claude-opus-5-5', 'Claude Opus 5.5 (most careful)'],
+  ],
+  openai: [
+    ['gpt-5.4-mini', 'GPT-5.4 mini'],
+    ['gpt-5.4', 'GPT-5.4'],
+  ],
+};
 
-export function recogConfig(): RecogConfig {
-  try { return { key: '', model: RECOG_MODELS[0][0], ...JSON.parse(localStorage.getItem(CFG) ?? '{}') }; }
-  catch { return { key: '', model: RECOG_MODELS[0][0] }; }
+function providerConfig(provider: RecogProvider, value?: Partial<ProviderConfig> | null): ProviderConfig {
+  return {
+    key: typeof value?.key === 'string' ? value.key.trim() : '',
+    model: RECOG_MODELS[provider].some(([id]) => id === value?.model) ? value!.model! : RECOG_MODELS[provider][0][0],
+  };
 }
-export function saveRecogConfig(c: RecogConfig) { localStorage.setItem(CFG, JSON.stringify(c)); }
+function storedConfig(): StoredConfig {
+  let value;
+  try { value = JSON.parse(localStorage.getItem(CFG) ?? '{}'); } catch { /* use defaults */ }
+  return {
+    provider: value?.provider === 'openai' ? 'openai' : 'claude',
+    // Existing settings were Claude-only. Never carry that key over to OpenAI.
+    claude: providerConfig('claude', value?.claude ?? value),
+    openai: providerConfig('openai', value?.openai),
+  };
+}
+export function recogConfig(provider?: RecogProvider): RecogConfig {
+  const stored = storedConfig();
+  provider ??= stored.provider;
+  return { provider, ...stored[provider] };
+}
+export function saveRecogConfig(c: RecogConfig) {
+  const stored = storedConfig();
+  stored.provider = c.provider;
+  stored[c.provider] = providerConfig(c.provider, c);
+  localStorage.setItem(CFG, JSON.stringify(stored));
+}
 export const recogReady = () => !!recogConfig().key;
 
 /** Renders ink elements onto white at a legible size and returns a PNG as base64. */
@@ -47,15 +78,27 @@ const PROMPTS = {
 export async function recognize(png: string, kind: 'latex' | 'text'): Promise<string> {
   const cfg = recogConfig();
   if (!cfg.key) throw new Error('Add your API key under Settings → Handwriting recognition first');
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const openai = cfg.provider === 'openai';
+  const res = await fetch(openai ? 'https://api.openai.com/v1/responses' : 'https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: {
+    headers: openai ? {
+      'content-type': 'application/json',
+      'Authorization': `Bearer ${cfg.key}`,
+    } : {
       'content-type': 'application/json',
       'x-api-key': cfg.key,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
     },
-    body: JSON.stringify({
+    body: JSON.stringify(openai ? {
+      model: cfg.model,
+      max_output_tokens: 4096,
+      store: false,
+      input: [{ role: 'user', content: [
+        { type: 'input_image', image_url: `data:image/png;base64,${png}`, detail: 'high' },
+        { type: 'input_text', text: PROMPTS[kind] },
+      ] }],
+    } : {
       model: cfg.model,
       max_tokens: 1200,
       messages: [{ role: 'user', content: [
@@ -71,7 +114,15 @@ export async function recognize(png: string, kind: 'latex' | 'text'): Promise<st
     throw new Error(msg);
   }
   const data = await res.json();
-  let out = (data.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n').trim();
+  if (data.error) throw new Error(data.error.message ?? 'Recognition failed');
+  if ((openai && data.status === 'incomplete') || (!openai && data.stop_reason === 'max_tokens')) {
+    throw new Error('The transcription was cut off. Select a smaller area and try again.');
+  }
+  const content = openai
+    ? (data.output ?? []).filter((item: any) => item.type === 'message').flatMap((item: any) => item.content ?? [])
+    : data.content ?? [];
+  if (content.some((c: any) => c.type === 'refusal')) throw new Error('The model could not transcribe this selection');
+  let out = content.filter((c: any) => c.type === (openai ? 'output_text' : 'text')).map((c: any) => c.text).join('\n').trim();
   out = out.replace(/^```(?:latex|tex)?\s*/i, '').replace(/\s*```$/, '').trim();
   if (kind === 'latex') out = out.replace(/^\\\[\s*|\s*\\\]$/g, '').replace(/^\$\$?\s*|\s*\$\$?$/g, '').trim();
   if (!out) throw new Error('The model returned nothing');

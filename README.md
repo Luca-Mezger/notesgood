@@ -142,8 +142,10 @@ from the hosted URL with Bubblewrap (Trusted Web Activity); see the deploy promp
 - **Pages grow downward**: write near the bottom of a PDF page and it gains half a page of space below;
   trim it again from the margin menu.
 - **Handwriting → LaTeX / text**: lasso some handwriting and press *To LaTeX* or *To text*. This sends an
-  image of the selected strokes to the Claude API with a key you enter under Settings; the key stays in
-  the browser. Without a key the rest of the app works as before.
+  image of the selected strokes to Claude or OpenAI, selected under Settings → Handwriting recognition.
+  OpenAI supports GPT-5.4 mini and GPT-5.4 through the [Responses API](https://developers.openai.com/api/docs/guides/images-vision).
+  Enter your own API key there; each provider's key and model stay separate in this browser and are
+  never synced. Without a key the rest of the app works as before.
 - **Dark mode** (Settings → Appearance): paper, ink, text and PDFs are inverted, pictures keep their colours.
 - **Hold to straighten**: rest the pen at the end of a stroke and it becomes a clean line, rectangle,
   ellipse or triangle (settings: on/off and hold time).

@@ -10,7 +10,7 @@ import { makeCover, renderThumb } from './thumb';
 import { pageH, pageW, uid, type El, type ImageEl, type Notebook, type Page, type ShapeKind, type TexEl, type TextEl, type Tpl } from './types';
 import { confirmDlg, download, h, icon, iconBtn, menu, popover, toast } from './ui';
 import { sync, syncEnabled } from './sync';
-import { inkToPng, recogReady, recognize as recogInk, RECOG_MODELS, recogConfig, saveRecogConfig } from './recognize';
+import { inkToPng, recogReady, recognize as recogInk, RECOG_MODELS, recogConfig, saveRecogConfig, type RecogProvider } from './recognize';
 import { applyTheme, themeSetting, setThemeSetting } from './theme';
 
 export interface EditorHandle { close(): Promise<void> }
@@ -1450,10 +1450,24 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         h('button', { type: 'button', class: themeSetting() === v ? 'active' : '', onclick: (e: Event) => { setThemeSetting(v); applyTheme(); const seg = (e.currentTarget as HTMLElement).parentElement!; seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === e.currentTarget)); } }, label))),
       h('label', null, 'Handwriting recognition (lasso → To LaTeX / To text)'),
       (() => {
-        const c = recogConfig();
-        const key = h('input', { type: 'password', class: 'field', value: c.key, placeholder: 'Claude API key (sk-ant-…)', autocomplete: 'off', onchange: () => saveRecogConfig({ ...recogConfig(), key: key.value.trim() }) });
-        const model = h('select', { class: 'field', onchange: () => saveRecogConfig({ ...recogConfig(), model: model.value }) }, ...RECOG_MODELS.map(([v, l]) => h('option', { value: v, selected: v === c.model }, l)));
-        return h('div', { class: 'form' }, key, model, h('small', { class: 'hint' }, 'The key stays in this browser and is sent only to api.anthropic.com, together with an image of the selected strokes. Get one at console.anthropic.com.'));
+        const provider = h('select', { class: 'field', 'aria-label': 'Recognition provider', onchange: () => {
+          saveRecogConfig(recogConfig(provider.value as RecogProvider)); refresh();
+        } }, h('option', { value: 'claude' }, 'Claude'), h('option', { value: 'openai' }, 'OpenAI'));
+        const key = h('input', { type: 'password', class: 'field', 'aria-label': 'Recognition API key', autocomplete: 'off', spellcheck: false, oninput: () => saveRecogConfig({ ...recogConfig(), key: key.value }) });
+        const model = h('select', { class: 'field', 'aria-label': 'Recognition model', onchange: () => saveRecogConfig({ ...recogConfig(), model: model.value }) });
+        const hint = h('small', { class: 'hint' });
+        const keyLink = h('a', { target: '_blank', rel: 'noopener noreferrer' }, 'Get API key');
+        function refresh() {
+          const c = recogConfig();
+          provider.value = c.provider; key.value = c.key;
+          key.placeholder = c.provider === 'openai' ? 'OpenAI API key (sk-…)' : 'Claude API key (sk-ant-…)';
+          model.replaceChildren(...RECOG_MODELS[c.provider].map(([v, l]) => h('option', { value: v, selected: v === c.model }, l)));
+          hint.textContent = `Only selected strokes are sent to ${c.provider === 'openai' ? 'OpenAI' : 'Claude'}. Keys stay in this browser. `;
+          keyLink.href = c.provider === 'openai' ? 'https://platform.openai.com/api-keys' : 'https://console.anthropic.com/settings/keys';
+          hint.append(keyLink);
+        }
+        refresh();
+        return h('div', { class: 'form' }, provider, model, key, hint);
       })(),
       h('label', null, 'Toolbar position'),
       h('div', { class: 'seg tight' }, ...([['top', 'Top'], ['left', 'Left side']] as const).map(([v, label]) =>

@@ -222,6 +222,63 @@ try {
   await click('[data-notebook="note-0"] .cover');
   await until("!!document.querySelector('.editor')");
   assert.equal((await readView()).top, 0, 'Another notebook must not inherit this PDF position');
+
+  await evaluate(`localStorage.setItem('margin.recog',JSON.stringify({key:'test-claude-key',model:'claude-opus-5-5'}))`);
+  await click('[aria-label="Settings"]');
+  const setRecognition = (label, value, event = 'change') => evaluate(`(()=>{
+    const field=document.querySelector('[aria-label="Recognition ${label}"]');field.value=${JSON.stringify(value)};field.dispatchEvent(new Event(${JSON.stringify(event)}));
+  })()`);
+  const recognitionField = (label) => evaluate(`document.querySelector('[aria-label="Recognition ${label}"]').value`);
+  assert.equal(await recognitionField('provider'), 'claude');
+  assert.equal(await recognitionField('model'), 'claude-opus-5-5');
+  await setRecognition('provider', 'openai');
+  assert.equal(await recognitionField('API key'), '', 'Claude key must not be reused for OpenAI');
+  assert.deepEqual(await evaluate(`[...document.querySelector('[aria-label="Recognition model"]').options].map(o=>o.value)`), ['gpt-5.4-mini', 'gpt-5.4']);
+  await setRecognition('API key', 'test-openai-key', 'input');
+  await setRecognition('model', 'gpt-5.4');
+  await setRecognition('provider', 'claude');
+  assert.equal(await recognitionField('API key'), 'test-claude-key');
+  assert.equal(await recognitionField('model'), 'claude-opus-5-5');
+  await setRecognition('provider', 'openai');
+  assert.equal(await recognitionField('API key'), 'test-openai-key');
+  assert.equal(await recognitionField('model'), 'gpt-5.4');
+  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+  await send('Page.reload');
+  await until("!!document.querySelector('.editor')");
+  await click('[aria-label="Settings"]');
+  assert.equal(await recognitionField('provider'), 'openai');
+  assert.equal(await recognitionField('model'), 'gpt-5.4');
+  assert.equal(await recognitionField('API key'), 'test-openai-key');
+  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+  console.log('PASS: recognition settings migrate Claude, switch providers without mixing keys, and persist OpenAI model/key across reload.');
+
+  await evaluate(`(()=>{
+    const original=window.fetch;window.recognitionRequests=[];
+    window.fetch=async(url,init)=>{
+      if(String(url).startsWith('https://api.openai.com/')){
+        window.recognitionRequests.push({url,headers:init.headers,body:JSON.parse(init.body)});
+        return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'x^2 + y^2 = 1'}]}]});
+      }
+      return original(url,init);
+    };
+    document.dispatchEvent(new KeyboardEvent('keydown',{key:'l',bubbles:true}));
+  })()`);
+  const point = await evaluate(`(()=>{const r=document.querySelector('.page').getBoundingClientRect(),z=Number(document.querySelector('.pages').style.getPropertyValue('--z'));return {x:r.x+20*z,y:r.y+30*z}})()`);
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
+  await until(`!!document.querySelector('[title="Handwritten maths → rendered LaTeX"]')`);
+  await click('[title="Handwritten maths → rendered LaTeX"]');
+  await until("!!document.querySelector('.page .katex')");
+  const request = await evaluate('window.recognitionRequests[0]');
+  assert.equal(request.headers.Authorization, 'Bearer test-openai-key');
+  assert.equal(request.body.model, 'gpt-5.4');
+  assert.equal(request.body.store, false);
+  assert.match(request.body.input[0].content[0].image_url, /^data:image\/png;base64,/);
+  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'z',ctrlKey:true,bubbles:true}))`);
+  await until("!document.querySelector('.page .katex')");
+  assert.equal(await evaluate('window.recognitionRequests.length'), 1);
+  console.log('PASS: selected ink converts through mocked OpenAI vision to rendered LaTeX; undo restores the ink without a second API request.');
+
   await click('[aria-label="Back to library"]');
   await until("!!document.querySelector('.library')");
   await openPdf(); await assertView(expected);
