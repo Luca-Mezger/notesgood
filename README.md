@@ -1,13 +1,36 @@
 # Notesgood
 
-A handwriting note-taking app in the spirit of GoodNotes: stylus ink, PDF annotation with
-a writable margin beside every page, and LaTeX. One web codebase that runs in the browser,
-on NixOS and on Android. Notes are stored on the device (IndexedDB) and can be synced between
-your devices through a tiny server you host yourself; there are no accounts.
+## Install now
+
+Choose your platform to open Notesgood, then confirm installation in your browser:
+
+| Install Notesgood | Finish installing |
+| --- | --- |
+| **[Windows →](https://lucamezger.com/notesgood/)** | Open in Chrome → address-bar **Install** icon, or ⋮ → **Cast, save, and share → Install page as app**. |
+| **[Android →](https://lucamezger.com/notesgood/)** | Open in Chrome → ⋮ → **Install and create shortcut → Install** (or **Add to Home screen → Install**, depending on your version). |
+| **[iOS / iPadOS →](https://lucamezger.com/notesgood/)** | Open in Safari → **Share → Add to Home Screen → Add**. Leave **Open as Web App** on if shown. |
+| **[Linux / NixOS →](https://lucamezger.com/notesgood/)** | Open in Chrome/Chromium → **Install** in the address bar or **Install page as app** in the browser menu. Launch Notesgood from your desktop's app menu. |
+
+These links open the same installable web app (PWA); installation needs your confirmation.
+You can also [use it immediately in your browser](https://lucamezger.com/notesgood/) without installing.
+Browser help: [Chrome](https://support.google.com/chrome/answer/9658361?hl=en) ·
+[Safari on iPhone](https://support.apple.com/en-gb/guide/iphone/iphea86e5236/ios).
+
+## Why choose Notesgood over Goodnotes?
+
+Built for handwritten lecture notes, PDF annotation, and maths. It may suit your workflow better if you want:
+
+- **Space beside your PDFs:** add an adjustable writing margin to every page, then expand it later without moving your ink.
+- **LaTeX beside your handwriting:** place rendered formulas anywhere, including in PDF margins, and use inline maths in text boxes.
+- **Linux and NixOS alongside your other devices:** use the same app on Windows, Android, iPhone, and iPad.
+- **Control over your notes:** notes are stored locally; optional sync uses your own PHP or Node server and a secret key, with no Notesgood account required. Publishing this code does not publish your notes.
+- **Free, open source, and customisable:** MIT-licensed code, no Notesgood subscription. Self-hosted sync requires hosting.
+- **An easier move from Goodnotes:** import exported PDFs, folders, or ZIPs while keeping folder structure; watch a PDF backup folder in supported browsers.
+
+Also includes pressure-sensitive ink, highlighting, shapes, a lasso, folders, dark mode, PDF export,
+and notebook backups. See [What it does](#what-it-does) and [current limitations](#not-there-yet).
 
 **Vibe coded:** built iteratively with AI coding assistants.
-
-[Try Notesgood in your browser](https://lucamezger.com/notesgood/).
 
 ## Screenshots
 
@@ -92,14 +115,12 @@ install it from the browser's menu and use it offline.
 
 ## Installing it as an app
 
-Notesgood is a web app, which is what lets one codebase run on NixOS, Android and everything else.
-"Installing" it means letting the browser wrap it as a standalone app with its own icon, full screen, offline:
+Use the [installation links at the top](#install-now) for Windows, Android, iOS/iPadOS, and Linux/NixOS.
+The browser installs Notesgood with its own icon and app window. Notes are stored on the device;
+offline use is available after the app and required resources have loaded over HTTPS.
 
-- **Android:** open the HTTPS address where it is hosted in Chrome → ⋮ → *Add to Home screen* → *Install*.
-- **Linux / NixOS desktop:** Chromium → ⋮ → *Cast, save and share* → *Install page as app*. It then
-  appears in your launcher. (Firefox cannot install web apps; `chromium --app=<url>` is the equivalent.)
-- A Play-Store-style APK can be produced from the hosted URL with Bubblewrap (Trusted Web Activity); see
-  the deploy prompt in `docs/`. It is the same app in a thin Android shell, not a separate codebase.
+There are currently no separate `.exe`, APK, or Linux package downloads. An Android APK can be built
+from the hosted URL with Bubblewrap (Trusted Web Activity); see the deploy prompt in `docs/`.
 
 ## What it does
 
