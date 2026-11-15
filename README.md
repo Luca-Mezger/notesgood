@@ -50,7 +50,8 @@ Combine ink, diagrams, text, and rendered formulas on a notebook page.
 
 ### Notebook library
 
-Keep notebooks in folders, mark favourites, and search your notes.
+Start with large folder tiles, open subfolders, and drag notebooks or entire folders to move them.
+Sort by name, last edit, or creation date in either direction; your choice is remembered.
 
 ![Notesgood library with sample notebooks, folders, favourites, and search](docs/screenshots/library.png)
 
@@ -124,7 +125,10 @@ from the hosted URL with Bubblewrap (Trusted Web Activity); see the deploy promp
 
 ## What it does
 
-- **Library**: notebook covers, folders, favourites, search, sort. Drop a PDF on the window to import.
+- **Library**: large folder tiles, nested folders, breadcrumbs, favourites, and search. Drag notebooks
+  onto folders, move whole folder trees, or drop onto a parent breadcrumb to move back. PDFs dropped
+  onto a folder import there. Sort folders and notebooks by name, last edit, or creation date,
+  ascending or descending; the app remembers the view and sorting. Earlier Goodnotes imports remain accessible separately.
 - **PDF import**: choose how much writing space to add to the right of every page (and its ruling).
   Up to 5x the page width. Change it later from the toolbar; ink keeps its position.
 - **Tools**: pressure-sensitive pen with adjustable smoothing, highlighter (mark or underline, freehand or

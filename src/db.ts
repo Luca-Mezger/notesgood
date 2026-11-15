@@ -50,6 +50,16 @@ export const db = {
     if (!silent) { t.objectStore('dirty').put(Date.now(), 'n:' + nb.id); t.objectStore('dirty').delete('d:n:' + nb.id); }
   }),
 
+  /** Folder changes and their notebook sync markers commit together; pages/blobs stay untouched. */
+  putFolders: (folders: string[], changed: Notebook[] = []) => tx(['notebooks', 'dirty', 'meta'], 'readwrite', (t) => {
+    t.objectStore('meta').put(folders, 'folders');
+    for (const nb of changed) {
+      t.objectStore('notebooks').put(nb);
+      t.objectStore('dirty').put(Date.now(), 'n:' + nb.id);
+      t.objectStore('dirty').delete('d:n:' + nb.id);
+    }
+  }),
+
   pages: (nb: string) => tx(['pages'], 'readonly', (t) => wrap<Page[]>(t.objectStore('pages').index('nb').getAll(nb))),
   page: (id: string) => tx(['pages'], 'readonly', (t) => wrap<Page | undefined>(t.objectStore('pages').get(id))),
   putPages: (pages: Page[], silent = false) => tx(['pages', 'dirty'], 'readwrite', (t) => {

@@ -6,6 +6,7 @@ import { uid, type Notebook, type Page, type Tpl } from './types';
 import { confirmDlg, download, fmtDate, h, icon, iconBtn, menu, modal, promptText, toast, type MenuItem } from './ui';
 import { markAllDirty, onSync, saveSyncConfig, sync, syncConfig, syncEnabled } from './sync';
 import { collectPdfSources, directoryFiles, importFolders, importTitle, pdfHash, type PdfSource } from './import';
+import { folderContains, folderName, folderParent, folderPaths, folderRemap, folderTarget, joinFolder } from './folders';
 
 const A4: [number, number] = [595, 842];
 const TPLS: [Tpl, string][] = [['blank', 'Blank'], ['lined', 'Lined'], ['grid', 'Grid'], ['dots', 'Dotted']];
@@ -13,13 +14,20 @@ const TPLS: [Tpl, string][] = [['blank', 'Blank'], ['lined', 'Lined'], ['grid', 
 type Src = PdfSource;
 
 type Filter = { k: 'all' } | { k: 'fav' } | { k: 'folder'; name: string };
+type LibraryDrag = { k: 'notebook'; id: string } | { k: 'folder'; name: string };
+const DRAG_TYPE = 'application/x-notesgood-library';
 
 export async function showLibrary(root: HTMLElement, openNotebook: (id: string) => void) {
   let notebooks = await db.notebooks();
-  let folders = (await db.meta<string[]>('folders')) ?? [];
-  let filter: Filter = { k: 'all' };
+  let folders = folderPaths([...(await db.meta<string[]>('folders') ?? []), ...notebooks.map((nb) => nb.folder)]);
+  let filter: Filter = { k: 'folder', name: '' };
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('notesgood.library.view') ?? 'null');
+    if (saved?.k === 'all' || saved?.k === 'fav' || (saved?.k === 'folder' && (saved.name === '' || folders.includes(saved.name)))) filter = saved;
+  } catch { /* Start at Documents if a saved view is invalid. */ }
   let query = '';
   let sort = localStorage.getItem('margin.sort') ?? 'updated';
+  let descending = localStorage.getItem('notesgood.sort.desc') !== null ? localStorage.getItem('notesgood.sort.desc') === 'true' : sort !== 'title';
   let importing = false, scanning = false, disposed = false;
   let quickPick = false;
   const autoEnabled = () => localStorage.getItem('goodnotes.auto') !== 'off';
@@ -33,7 +41,23 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
     h('button', { class: 'btn small', type: 'button', onclick: () => void scanGoodnotes(true) }, 'Check now'), autoToggle);
 
   const grid = h('div', { class: 'grid' });
-  const chips = h('div', { class: 'chips' });
+  const navigation = h('div', { class: 'library-navigation' });
+  const folderGrid = h('div', { class: 'folder-grid', 'aria-label': 'Folders' });
+  const folderSection = h('section', { class: 'folder-section' }, folderGrid);
+  const earlierImports = h('div', { class: 'earlier-imports' });
+  const notebookHeading = h('h2', { class: 'section-title' });
+  const sortDirection = iconBtn('down', 'Sort descending', () => {
+    descending = !descending;
+    localStorage.setItem('notesgood.sort.desc', String(descending));
+    renderGrid();
+  });
+  const sortSelect = h('select', { class: 'field sort', 'aria-label': 'Sort by', onchange: (e: Event) => {
+    sort = (e.target as HTMLSelectElement).value;
+    localStorage.setItem('margin.sort', sort);
+    descending = sort !== 'title';
+    localStorage.setItem('notesgood.sort.desc', String(descending));
+    renderGrid();
+  } }, ...[['title', 'Name'], ['updated', 'Last edited'], ['created', 'Date created']].map(([v, l]) => h('option', { value: v, selected: v === sort }, l)));
   const fileInput = h('input', {
     type: 'file', accept: 'application/pdf,.pdf,.zip,.goodnotes,.notesgood,.margin', multiple: true, hidden: true,
     onchange: () => { const fs = [...(fileInput.files ?? [])]; const quick = quickPick; quickPick = false; fileInput.value = ''; if (fs.length) void importFiles(fs.map((file) => ({ file, path: file.name })), quick); },
@@ -64,37 +88,49 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       h('h1', null, 'Notesgood'),
       h('label', { class: 'search' }, icon('search', 18),
         h('input', { type: 'search', placeholder: 'Search notes', 'aria-label': 'Search notes', oninput: (e: Event) => { query = (e.target as HTMLInputElement).value.toLowerCase(); renderGrid(); } })),
-      h('select', { class: 'field sort', 'aria-label': 'Sort by', onchange: (e: Event) => { sort = (e.target as HTMLSelectElement).value; localStorage.setItem('margin.sort', sort); renderGrid(); } },
-        ...[['updated', 'Last edited'], ['title', 'Name'], ['created', 'Date created']].map(([v, l]) => h('option', { value: v, selected: v === sort }, l))),
       h('div', { class: 'lib-actions' },
         h('button', { class: 'btn', type: 'button', onclick: goodnotesHelp }, icon('import', 18), 'From Goodnotes'),
         h('button', { class: 'btn', type: 'button', title: 'Import PDFs, a ZIP of PDFs, or a backup file', onclick: () => fileInput.click() }, icon('import', 18), 'Import'),
         h('button', { class: 'btn primary', type: 'button', onclick: newNotebook }, icon('plus', 18), 'New notebook'),
         syncBtn, libMore),
       fileInput, dirInput),
-    importStatus, chips, grid);
+    navigation, importStatus,
+    h('div', { class: 'library-tools' },
+      h('p', { class: 'hint' }, 'Drag notebooks onto a folder to move them. Drop onto a breadcrumb to move back.'),
+      h('label', { class: 'sort-controls' }, h('span', null, 'Sort by'), sortSelect, sortDirection)),
+    folderSection, earlierImports, notebookHeading, grid);
 
   // Drop a PDF anywhere on the library to import it
-  view.addEventListener('dragover', (e) => { e.preventDefault(); view.classList.add('dropping'); });
-  view.addEventListener('dragleave', () => view.classList.remove('dropping'));
+  view.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); view.classList.add('dropping'); } });
+  view.addEventListener('dragleave', (e) => { if (!view.contains(e.relatedTarget as Node)) view.classList.remove('dropping'); });
   view.addEventListener('drop', (e) => {
     e.preventDefault();
     view.classList.remove('dropping');
-    if (e.dataTransfer) droppedFiles(e.dataTransfer).then((fs) => { if (fs.length) importFiles(fs); });
+    if (e.dataTransfer?.types.includes('Files')) {
+      const destination = currentFolder();
+      droppedFiles(e.dataTransfer).then((fs) => { if (fs.length) void importFiles(fs, false, false, destination); }).catch((error) => toast(error.message));
+    }
   });
 
   root.replaceChildren(view);
-  renderChips();
+  renderNavigation();
   renderGrid();
 
   // Sync whenever the library is shown, when the app comes back to the foreground, and every minute.
   const refreshAfterSync = async () => {
     if (!(await sync())) return;
     if (importing) return; // An importer is updating this list; refresh on the next sync.
+    const previouslyUsed = new Set(folderPaths(notebooks.map((nb) => nb.folder)));
     notebooks = await db.notebooks();
+    const stillUsed = new Set(folderPaths(notebooks.map((nb) => nb.folder)));
+    // Retire old populated paths after another device moves/renames their contents.
+    // Locally created empty folders remain available.
+    folders = folders.filter((path) => !previouslyUsed.has(path) || stillUsed.has(path));
     const missing = [...new Set(notebooks.map((nb) => nb.folder))].filter((f) => f && !folders.includes(f));
-    if (missing.length) { folders.push(...missing); await db.putMeta('folders', folders); }
-    renderChips(); renderGrid();
+    folders = folderPaths([...folders, ...missing]);
+    await db.putMeta('folders', folders);
+    if (filter.k === 'folder' && filter.name && !folders.includes(filter.name)) filter = { k: 'folder', name: '' };
+    renderNavigation(); renderGrid();
   };
   if (syncEnabled()) refreshAfterSync();
   const timer = window.setInterval(() => { if (document.visibilityState === 'visible') { if (syncEnabled()) refreshAfterSync(); void scanGoodnotes(); } }, 60000);
@@ -261,66 +297,208 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
 
   function currentFolder(): string { return filter.k === 'folder' ? filter.name : ''; }
 
-  function renderChips() {
-    const chip = (label: string, f: Filter, ic?: string) => {
-      const active = f.k === filter.k && (f.k !== 'folder' || f.name === (filter as any).name);
-      return h('button', { class: 'chip' + (active ? ' active' : ''), type: 'button', onclick: () => { filter = f; renderChips(); renderGrid(); } },
-        ic ? icon(ic, 16) : null, label);
+  function navigate(next: Filter) {
+    filter = next;
+    sessionStorage.setItem('notesgood.library.view', JSON.stringify(filter));
+    query = '';
+    view.querySelector<HTMLInputElement>('input[type="search"]')!.value = '';
+    renderNavigation(); renderGrid();
+  }
+
+  function renderNavigation() {
+    folders = folderPaths([...folders, ...notebooks.map((nb) => nb.folder)]);
+    const crumbs = h('nav', { class: 'breadcrumbs', 'aria-label': 'Folder path' });
+    const crumb = (label: string, path: string, current: boolean) => {
+      const button = h('button', { type: 'button', class: 'breadcrumb', 'aria-current': current ? 'page' : null,
+        onclick: () => navigate({ k: 'folder', name: path }) }, label);
+      dropTarget(button, path);
+      return button;
     };
-    chips.replaceChildren(
-      chip('All notes', { k: 'all' }),
-      chip('Favourites', { k: 'fav' }, 'star'),
-      ...folders.map((name) => {
-        const c = chip(name, { k: 'folder', name }, 'folder');
-        c.addEventListener('contextmenu', (e) => { e.preventDefault(); folderMenu(c, name); });
-        if (filter.k === 'folder' && filter.name === name) c.append(h('span', { class: 'chip-more', title: 'Folder options', onclick: (e: Event) => { e.stopPropagation(); folderMenu(c, name); } }, icon('more', 16)));
-        return c;
-      }),
-      h('button', { class: 'chip ghost', type: 'button', onclick: addFolder }, icon('plus', 16), 'Folder'));
+    crumbs.append(crumb('Documents', '', filter.k === 'folder' && !filter.name));
+    if (filter.k === 'folder' && filter.name) {
+      const parts = filter.name.split(' / ');
+      parts.forEach((part, i) => crumbs.append(h('span', { class: 'breadcrumb-separator', 'aria-hidden': 'true' }, '›'), crumb(part, parts.slice(0, i + 1).join(' / '), i === parts.length - 1)));
+    } else if (filter.k !== 'folder') crumbs.append(h('span', { class: 'breadcrumb-separator', 'aria-hidden': 'true' }, '›'), h('span', { 'aria-current': 'page' }, filter.k === 'all' ? 'All notebooks' : 'Favourites'));
+    const viewSelect = h('select', { class: 'field library-view', 'aria-label': 'Library view', onchange: (e: Event) => {
+      const k = (e.target as HTMLSelectElement).value;
+      navigate(k === 'all' || k === 'fav' ? { k } : { k: 'folder', name: '' });
+    } }, ...[['folder', 'Documents'], ['all', 'All notebooks'], ['fav', 'Favourites']].map(([value, label]) => h('option', { value, selected: filter.k === value }, label)));
+    navigation.replaceChildren(crumbs, h('div', { class: 'library-title-row' },
+      h('div', null, h('h2', { class: 'library-title' }, filter.k === 'folder' ? folderName(filter.name) || 'Documents' : filter.k === 'all' ? 'All notebooks' : 'Favourites'),
+        h('p', { class: 'muted' }, filter.k === 'folder' && filter.name ? 'Your notebooks and subfolders' : 'Your notes, organised your way')),
+      h('div', { class: 'library-view-actions' }, viewSelect,
+        h('button', { class: 'btn', type: 'button', onclick: addFolder }, icon('plus', 18), 'New folder'))));
   }
 
   async function addFolder() {
-    const name = await promptText('New folder', '', 'Create');
-    if (!name) return;
-    if (!folders.includes(name)) { folders.push(name); await db.putMeta('folders', folders); }
-    filter = { k: 'folder', name };
-    renderChips(); renderGrid();
+    const label = await promptText('New folder', '', 'Create');
+    if (label === null) return;
+    try {
+      const name = folderTarget(currentFolder(), label);
+      if (folders.includes(name)) { toast('A folder with that name already exists here.'); return; }
+      folders = folderPaths([...folders, name]);
+      await db.putFolders(folders);
+      renderNavigation(); renderGrid();
+    } catch (e) { toast((e as Error).message); }
+  }
+
+  async function relocateFolder(from: string, to: string) {
+    const latest = await db.notebooks();
+    const paths = folderPaths([...folders, ...latest.map((nb) => nb.folder)]);
+    const mapping = folderRemap(paths, from, to);
+    if (!mapping.size) return;
+    const changed = latest.filter((nb) => mapping.has(nb.folder)).map((nb) => ({ ...nb, folder: mapping.get(nb.folder)!, updated: Date.now(), folderMoved: true }));
+    const next = folderPaths(paths.map((path) => mapping.get(path) ?? path));
+    await db.putFolders(next, changed);
+    notebooks = latest.map((nb) => changed.find((moved) => moved.id === nb.id) ?? nb);
+    folders = next;
+    if (filter.k === 'folder' && mapping.has(filter.name)) { filter = { k: 'folder', name: mapping.get(filter.name)! }; sessionStorage.setItem('notesgood.library.view', JSON.stringify(filter)); }
+    renderNavigation(); renderGrid(); pushSoon();
+  }
+
+  async function moveNotebook(id: string, destination: string) {
+    const latest = await db.notebook(id);
+    if (!latest || latest.folder === destination) return;
+    if (destination && !folders.includes(destination)) throw new Error('That folder no longer exists.');
+    const moved = { ...latest, folder: destination, updated: Date.now(), folderMoved: true };
+    await db.putFolders(folders, [moved]);
+    notebooks = notebooks.map((nb) => nb.id === id ? moved : nb);
+    renderNavigation(); renderGrid(); pushSoon();
+    toast('Moved to ' + (destination || 'Documents') + '.');
+  }
+
+  function destinationSelect(exclude?: string) {
+    return h('select', { class: 'field', 'aria-label': 'Destination folder' }, h('option', { value: '' }, 'Documents'),
+      ...folders.filter((f) => !exclude || !folderContains(exclude, f)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map((f) => h('option', { value: f }, f)));
   }
 
   function folderMenu(anchor: HTMLElement, name: string) {
     menu(anchor, [
       { label: 'Rename folder', icon: 'pen', action: async () => {
-        const next = await promptText('Rename folder', name);
-        if (!next || next === name) return;
-        folders = folders.map((f) => (f === name ? next : f));
-        await db.putMeta('folders', folders);
-        for (const nb of notebooks) if (nb.folder === name) { nb.folder = next; await db.putNotebook(nb); }
-        pushSoon();
-        filter = { k: 'folder', name: next };
-        renderChips(); renderGrid();
+        const next = await promptText('Rename folder', folderName(name));
+        if (next === null) return;
+        try { await relocateFolder(name, folderTarget(folderParent(name), next)); }
+        catch (e) { toast((e as Error).message); }
+      } },
+      { label: 'Move folder…', icon: 'folder', action: async () => {
+        const select = destinationSelect(name);
+        select.value = folderParent(name);
+        if (!(await modal({ title: 'Move ' + folderName(name), body: select, ok: 'Move' }))) return;
+        try { await relocateFolder(name, joinFolder(select.value, folderName(name))); }
+        catch (e) { toast((e as Error).message); }
       } },
       { label: 'Delete folder', icon: 'trash', danger: true, action: async () => {
-        if (!(await confirmDlg(`Delete folder “${name}”?`, 'The notebooks inside are kept and move back to All notes.'))) return;
-        folders = folders.filter((f) => f !== name);
-        await db.putMeta('folders', folders);
-        for (const nb of notebooks) if (nb.folder === name) { nb.folder = ''; await db.putNotebook(nb); }
-        pushSoon();
-        filter = { k: 'all' };
-        renderChips(); renderGrid();
+        const parent = folderParent(name);
+        if (!(await confirmDlg(`Delete folder “${folderName(name)}”?`, `The folder and its subfolders are removed. All notebooks inside are kept and move to ${parent || 'Documents'}.`))) return;
+        const latest = await db.notebooks();
+        const changed = latest.filter((nb) => folderContains(name, nb.folder)).map((nb) => ({ ...nb, folder: parent, updated: Date.now(), folderMoved: true }));
+        const next = folders.filter((f) => !folderContains(name, f));
+        await db.putFolders(next, changed);
+        notebooks = latest.map((nb) => changed.find((moved) => moved.id === nb.id) ?? nb); folders = next;
+        pushSoon(); navigate({ k: 'folder', name: parent });
       } },
     ]);
   }
 
+  let dragging: LibraryDrag | null = null;
+  function draggable(element: HTMLElement, item: LibraryDrag, label: string) {
+    element.draggable = true;
+    element.addEventListener('dragstart', (e) => {
+      if (!e.dataTransfer) return;
+      e.stopPropagation(); dragging = item;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(item));
+      e.dataTransfer.setData('text/plain', label);
+      element.classList.add('dragging');
+    });
+    element.addEventListener('dragend', () => {
+      dragging = null; element.classList.remove('dragging');
+      view.querySelectorAll('.drop-active').forEach((target) => target.classList.remove('drop-active'));
+    });
+  }
+
+  function dropTarget(element: HTMLElement, destination: string) {
+    element.dataset.dropFolder = destination;
+    const allowed = () => {
+      if (!dragging) return true;
+      if (dragging.k === 'folder') return !folderContains(dragging.name, destination) && folderParent(dragging.name) !== destination;
+      const id = dragging.id;
+      return notebooks.find((nb) => nb.id === id)?.folder !== destination;
+    };
+    element.addEventListener('dragover', (e) => {
+      if (e.dataTransfer?.types.includes('Files')) {
+        e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'copy'; element.classList.add('drop-active'); return;
+      }
+      if (!e.dataTransfer?.types.includes(DRAG_TYPE) || !allowed()) return;
+      e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; element.classList.add('drop-active');
+    });
+    element.addEventListener('dragleave', (e) => { if (!element.contains(e.relatedTarget as Node)) element.classList.remove('drop-active'); });
+    element.addEventListener('drop', (e) => {
+      if (e.dataTransfer?.types.includes('Files')) {
+        e.preventDefault(); e.stopPropagation(); element.classList.remove('drop-active');
+        void droppedFiles(e.dataTransfer).then((files) => importFiles(files, false, false, destination)).catch((error) => toast(error.message));
+        return;
+      }
+      if (!e.dataTransfer?.types.includes(DRAG_TYPE)) return;
+      e.preventDefault(); e.stopPropagation(); element.classList.remove('drop-active');
+      if (importing || scanning) { toast('Please wait for the import to finish before moving notes.'); return; }
+      try {
+        const item = JSON.parse(e.dataTransfer.getData(DRAG_TYPE)) as LibraryDrag;
+        let operation: Promise<void>;
+        if (item?.k === 'notebook' && typeof item.id === 'string') operation = moveNotebook(item.id, destination);
+        else if (item?.k === 'folder' && typeof item.name === 'string') operation = relocateFolder(item.name, joinFolder(destination, folderName(item.name)));
+        else return;
+        void operation.catch((error) => toast(error.message));
+      } catch { toast('That item could not be moved.'); }
+      dragging = null;
+    });
+  }
+
+  function folderCard(path: string): HTMLElement {
+    const contents = notebooks.filter((nb) => folderContains(path, nb.folder));
+    const subfolders = folders.filter((f) => folderParent(f) === path).length;
+    const more = iconBtn('more', 'Folder options for ' + folderName(path), (e) => { e.stopPropagation(); folderMenu(more, path); }, 'folder-more');
+    const tile = h('article', { class: 'folder-card', 'data-folder': path },
+      h('button', { class: 'folder-open', type: 'button', 'aria-label': 'Open folder ' + path, onclick: () => navigate({ k: 'folder', name: path }) },
+        h('div', { class: 'folder-art' }, icon('folder', 104)),
+        h('h3', null, folderName(path)), h('p', null, `${contents.length} ${contents.length === 1 ? 'notebook' : 'notebooks'}` + (subfolders ? ` · ${subfolders} ${subfolders === 1 ? 'folder' : 'folders'}` : ''))), more);
+    tile.addEventListener('contextmenu', (e) => { e.preventDefault(); folderMenu(more, path); });
+    draggable(tile, { k: 'folder', name: path }, folderName(path)); dropTarget(tile, path);
+    return tile;
+  }
+
   function renderGrid() {
+    const direction = descending ? -1 : 1;
+    const compareName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+    sortDirection.replaceChildren(icon(descending ? 'down' : 'up'));
+    sortDirection.title = descending ? 'Descending — click for ascending' : 'Ascending — click for descending';
+    sortDirection.setAttribute('aria-label', sortDirection.title);
+    sortDirection.setAttribute('aria-pressed', String(descending));
+    const parent = currentFolder();
+    const legacy = filter.k === 'folder' && !parent && !query && notebooks.some((nb) => nb.importSourceId) &&
+      notebooks.some((nb) => nb.folder === 'Goodnotes') && notebooks.filter((nb) => folderContains('Goodnotes', nb.folder)).every((nb) => nb.folder === 'Goodnotes' && !!nb.importHash && !nb.importSourceId);
+    const folderDate = (path: string) => {
+      const contents = notebooks.filter((nb) => folderContains(path, nb.folder));
+      return contents.length ? (sort === 'created' ? Math.min(...contents.map((nb) => nb.created)) : Math.max(...contents.map((nb) => nb.updated))) : 0;
+    };
+    const visibleFolders = filter.k === 'fav' ? [] : folders.filter((f) => folderParent(f) === parent && (!query || folderName(f).toLowerCase().includes(query)) && !(legacy && f === 'Goodnotes'));
+    visibleFolders.sort((a, b) => direction * ((sort === 'title' ? compareName(folderName(a), folderName(b)) : folderDate(a) - folderDate(b)) || compareName(folderName(a), folderName(b))));
+    folderGrid.replaceChildren(...visibleFolders.map(folderCard));
+    folderSection.hidden = !visibleFolders.length;
+    earlierImports.replaceChildren(...(legacy ? [h('button', { type: 'button', class: 'earlier-imports-link', onclick: () => navigate({ k: 'folder', name: 'Goodnotes' }) },
+      icon('folder', 18), `Earlier imports · ${notebooks.filter((nb) => nb.folder === 'Goodnotes').length} notebooks`, h('span', { 'aria-hidden': 'true' }, '›'))] : []));
+
     let list = notebooks.filter((nb) =>
-      (filter.k === 'all' || (filter.k === 'fav' ? nb.fav : nb.folder === filter.name)) &&
+      (filter.k === 'all' || (filter.k === 'fav' ? nb.fav : query ? !filter.name || folderContains(filter.name, nb.folder) : nb.folder === filter.name)) &&
       (!query || nb.title.toLowerCase().includes(query)));
-    list.sort((a, b) => sort === 'title' ? a.title.localeCompare(b.title) : sort === 'created' ? b.created - a.created : b.updated - a.updated);
+    list.sort((a, b) => direction * ((sort === 'title' ? compareName(a.title, b.title) : sort === 'created' ? a.created - b.created : a.updated - b.updated) || compareName(a.title, b.title)));
+    notebookHeading.textContent = query ? `Search results · ${list.length}` : list.length ? `Notebooks · ${list.length}` : '';
+    notebookHeading.hidden = !list.length && !query;
 
     if (!list.length) {
-      grid.replaceChildren(h('div', { class: 'empty' },
+      grid.replaceChildren(...(visibleFolders.length && !query ? [] : [h('div', { class: 'empty' },
         h('h2', null, query ? 'No notes match your search' : notebooks.length ? 'Nothing here yet' : 'Start your first notebook'),
-        h('p', null, query ? 'Try a different title.' : 'Create a notebook, or import a PDF and choose how much writing space you want beside each page.')));
+        h('p', null, query ? 'Try a different title.' : 'Create a notebook or drop a PDF here to import it.'))]));
       return;
     }
     grid.replaceChildren(...list.map(card));
@@ -328,18 +506,21 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
 
   function card(nb: Notebook): HTMLElement {
     const more = iconBtn('more', 'Notebook options', (e) => { e.stopPropagation(); nbMenu(more, nb); }, 'card-more');
-    return h('article', { class: 'card' },
+    const tile = h('article', { class: 'card', 'data-notebook': nb.id },
       h('button', { class: 'cover', type: 'button', 'aria-label': 'Open ' + nb.title, onclick: () => openNotebook(nb.id) },
         nb.cover ? h('img', { src: nb.cover, alt: '', draggable: false }) : h('div', { class: 'cover-blank' })),
       h('div', { class: 'card-meta' },
         h('div', { class: 'card-text' },
           h('h3', { title: nb.title }, nb.fav ? h('span', { class: 'fav' }, '★ ') : null, nb.title),
-          h('p', null, `${fmtDate(nb.updated)} · ${nb.pages.length} ${nb.pages.length === 1 ? 'page' : 'pages'}`)),
+          h('p', null, `${fmtDate(nb.updated)} · ${nb.pages.length} ${nb.pages.length === 1 ? 'page' : 'pages'}`),
+          (filter.k !== 'folder' || query) && nb.folder ? h('p', { class: 'notebook-folder' }, nb.folder) : null),
         more));
+    draggable(tile, { k: 'notebook', id: nb.id }, nb.title);
+    return tile;
   }
 
   function nbMenu(anchor: HTMLElement, nb: Notebook) {
-    const save = async () => { await db.putNotebook(nb); renderGrid(); pushSoon(); };
+    const save = async () => { nb.updated = Date.now(); await db.putNotebook(nb); renderGrid(); pushSoon(); };
     const items: MenuItem[] = [
       { label: 'Rename', icon: 'pen', action: async () => { const t = await promptText('Rename notebook', nb.title); if (t) { nb.title = t; save(); } } },
       { label: nb.fav ? 'Remove from favourites' : 'Add to favourites', icon: 'star', action: () => { nb.fav = !nb.fav; save(); } },
@@ -358,11 +539,11 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
   }
 
   async function moveToFolder(nb: Notebook) {
-    const sel = h('select', { class: 'field' },
-      h('option', { value: '' }, 'No folder'),
-      ...folders.map((f) => h('option', { value: f, selected: f === nb.folder }, f)));
-    if (!folders.length) { toast('Create a folder first with “+ Folder”.'); return; }
-    if (await modal({ title: 'Move to folder', body: sel, ok: 'Move' })) { nb.folder = sel.value; await db.putNotebook(nb); renderGrid(); pushSoon(); }
+    const sel = destinationSelect();
+    sel.value = nb.folder;
+    if (await modal({ title: 'Move to folder', body: sel, ok: 'Move' })) {
+      try { await moveNotebook(nb.id, sel.value); } catch (e) { toast((e as Error).message); }
+    }
   }
 
   function tplPicker(value: Tpl, onChange: (t: Tpl) => void): HTMLElement {
@@ -453,7 +634,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
     return nb;
   }
 
-  async function importPdf(src: Src) {
+  async function importPdf(src: Src, destination?: string) {
     toast('Reading PDF…', true);
     let sizes: [number, number][];
     let data: ArrayBuffer;
@@ -476,7 +657,8 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       `${sizes.length} ${sizes.length === 1 ? 'page' : 'pages'}. You can change the space later from the toolbar; your writing stays where it is.`,
       importTitle(src.name));
     if (!opt) return;
-    const folder = importFolders([src])[0] || currentFolder();
+    const sourceFolder = importFolders([src])[0];
+    const folder = destination === undefined ? sourceFolder || currentFolder() : joinFolder(destination, sourceFolder);
     const nb = await createPdfNotebook(data, sizes, opt.title, folder, opt.margin, opt.marginTpl, hash);
     if (folder && !folders.includes(folder)) { folders.push(folder); await db.putMeta('folders', folders); }
     await src.onImported?.();
@@ -484,9 +666,9 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
   }
 
   /** Imports many PDFs at once (several files, a folder, or a ZIP such as a GoodNotes export). */
-  async function importMany(srcs: Src[], skipped: number, quick = false, automatic = false) {
+  async function importMany(srcs: Src[], skipped: number, quick = false, automatic = false, destination?: string) {
     const folderNames = importFolders(srcs);
-    const folderOf = (i: number) => folderNames[i];
+    const folderOf = (i: number) => destination === undefined ? folderNames[i] : joinFolder(destination, folderNames[i]);
     const nFolders = new Set(srcs.map((_, i) => folderOf(i)).filter(Boolean)).size;
 
     const opt = quick ? { margin: goodnotesMargin(), marginTpl: 'lined' as Tpl } : await askMargin(`Import ${srcs.length} PDFs`, 595, 842,
@@ -510,7 +692,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
           const sourceFolder = folderOf(i);
           let changed = false;
           if (sourceId && !existing.importSourceId) { existing.importSourceId = sourceId; changed = true; }
-          if (sourceFolder && sourceFolder !== 'Goodnotes' && (!existing.folder || existing.folder === 'Goodnotes')) {
+          if (!existing.folderMoved && sourceFolder && sourceFolder !== 'Goodnotes' && (!existing.folder || existing.folder === 'Goodnotes')) {
             existing.folder = sourceFolder;
             changed = true;
             if (!folders.includes(sourceFolder)) { folders.push(sourceFolder); await db.putMeta('folders', folders); }
@@ -520,16 +702,16 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
         }
         const sizes = await pdfPageSizes(data);
         if (!sizes.length) throw new Error('PDF has no pages');
-        const folder = folderOf(i) || currentFolder();
+        const folder = folderOf(i) || (destination ?? currentFolder());
         const nb = await createPdfNotebook(data, sizes, importTitle(srcs[i].name), folder, opt.margin, opt.marginTpl, hash, sourceId);
         notebooks.push(nb);
         await srcs[i].onImported?.();
         if (folder && !folders.includes(folder)) { folders.push(folder); await db.putMeta('folders', folders); }
         ok++;
       } catch (e) { console.warn('Import failed for', srcs[i].name, e); failed++; }
-      if (i % 3 === 2) { renderChips(); renderGrid(); }
+      if (i % 3 === 2) { renderNavigation(); renderGrid(); }
     }
-    renderChips(); renderGrid();
+    renderNavigation(); renderGrid();
     pushSoon();
     const summary = `Imported ${ok} ${ok === 1 ? 'notebook' : 'notebooks'}` + (duplicates ? `, ${duplicates} already imported` : '') + (failed ? `, ${failed} could not be read` : '') + (skipped ? `, ${skipped} native Goodnotes files need PDF export` : '') + '.';
     if (quick) setImportStatus(summary + (autoEnabled() ? ' Checking for new exports automatically.' : ' Auto-import is paused.'));
@@ -537,11 +719,11 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
   }
 
   /** Entry point for everything picked or dropped: PDFs, ZIPs of PDFs, folders, and Notesgood backups. */
-  async function importFiles(files: { file: File; path: string }[], quick = false, locked = false): Promise<void> {
+  async function importFiles(files: { file: File; path: string }[], quick = false, locked = false, destination?: string): Promise<void> {
     if (importing || scanning) { toast('An import is already running. Please wait for it to finish.'); return; }
     if (!locked && navigator.locks) {
       await navigator.locks.request('notesgood-import', { ifAvailable: true }, async (lock) => {
-        if (lock) await importFiles(files, quick, true);
+        if (lock) await importFiles(files, quick, true, destination);
         else toast('An import is running in another Notesgood window. Please wait for it to finish.');
       });
       return;
@@ -572,11 +754,11 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
         notebooks = await db.notebooks();
         const missing = [...new Set(notebooks.map((nb) => nb.folder))].filter((f) => f && !folders.includes(f));
         if (missing.length) { folders.push(...missing); await db.putMeta('folders', folders); }
-        renderChips(); renderGrid();
+        renderNavigation(); renderGrid();
         toast(`Restored ${restored} ${restored === 1 ? 'notebook' : 'notebooks'}.`);
       }
-      if (srcs.length === 1 && !skipped && !quick) await importPdf(srcs[0]);
-      else if (srcs.length) await importMany(srcs, skipped, quick);
+      if (srcs.length === 1 && !skipped && !quick) await importPdf(srcs[0], destination);
+      else if (srcs.length) await importMany(srcs, skipped, quick, false, destination);
       else if (skipped) await modal({ title: 'These files need a PDF export', body: 'These are native Goodnotes documents. In Goodnotes Web, open each notebook → Share → Export as PDF. Save it to Downloads and the local Notesgood app will pick it up automatically. On iPad or Mac you can also export selected folders as PDFs.', ok: 'OK', cancel: null });
       else if (!restored) toast('Nothing to import: choose PDFs, a ZIP of PDFs, or a Notesgood backup.');
       if (unreadable) toast(`${unreadable} ${unreadable === 1 ? 'file could' : 'files could'} not be read. Other selected files were still imported.`);

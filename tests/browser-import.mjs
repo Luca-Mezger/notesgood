@@ -57,6 +57,8 @@ try {
   await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.requestAnimationFrame = () => 0;' });
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 850, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: base + '/' });
+  await until("document.querySelector('.import-status')?.textContent.includes('already imported')");
+  await evaluate("(()=>{const s=document.querySelector('[aria-label=\"Library view\"]');s.value='all';s.dispatchEvent(new Event('change'))})()");
   await until("document.querySelectorAll('.card').length===2 && document.querySelector('.import-status')?.textContent.includes('already imported')");
   console.log('PASS: actual browser automatically imports two unique PDFs and skips a renamed duplicate.');
   assert.equal(await evaluate("document.querySelector('.modal-back')===null"), true, 'Auto import must not ask for margins');
@@ -86,19 +88,33 @@ try {
   await mkdir(join(inboxDir, 'Math'), { recursive: true });
   await writeFile(join(inboxDir, 'Math', 'Algebra.pdf'), first);
   await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Check now').click()");
-  await until("document.querySelector('.import-status')?.textContent.includes('1 already imported') && [...document.querySelectorAll('.chip')].some(e=>e.textContent.includes('Math'))");
+  await until("document.querySelector('.import-status')?.textContent.includes('1 already imported') && !!document.querySelector('[data-folder=\"Math\"]')");
   assert.equal(await evaluate("document.querySelectorAll('.card').length"), 3);
-  await evaluate("[...document.querySelectorAll('.chip')].find(e=>e.textContent.includes('Math')).click()");
+  await evaluate("document.querySelector('[data-folder=\"Math\"] .folder-open').click()");
   await until("document.querySelectorAll('.card').length===1");
   assert((await evaluate("document.querySelector('.card').textContent")).includes('Algebra'));
   console.log('PASS: private migration exports recover the original folder without duplicating an existing notebook.');
   await mkdir(join(inboxDir, 'Other course'), { recursive: true });
   await writeFile(join(inboxDir, 'Other course', 'Algebra.pdf'), first);
+  await evaluate("document.querySelector('.breadcrumb[data-drop-folder=\"\"]').click()");
   await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Check now').click()");
-  await until("[...document.querySelectorAll('.chip')].some(e=>e.textContent.includes('Other course'))");
-  await evaluate("[...document.querySelectorAll('.chip')].find(e=>e.textContent.includes('Other course')).click()");
+  await until("!!document.querySelector('[data-folder=\"Other course\"]')");
+  await evaluate("document.querySelector('[data-folder=\"Other course\"] .folder-open').click()");
   await until("document.querySelectorAll('.card').length===1");
   console.log('PASS: distinct migration sources keep their separate notebooks even when their PDF content is identical.');
+  await evaluate(`(()=>{
+    const source=document.querySelector('.card'),target=document.querySelector('.breadcrumb[data-drop-folder=""]'),dataTransfer=new DataTransfer();
+    source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer}));
+    target.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer}));
+    source.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer}));
+  })()`);
+  await until("document.querySelectorAll('.card').length===0");
+  await writeFile(join(inboxDir, 'Other course', 'Algebra.pdf'), first);
+  await evaluate("document.querySelector('.breadcrumb[data-drop-folder=\"\"]').click()");
+  await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Check now').click()");
+  await until("document.querySelector('.import-status')?.textContent.includes('already imported')");
+  assert.equal(await evaluate("document.querySelectorAll('.card').length"), 1, 'Auto import must retain a user-selected root folder');
+  console.log('PASS: automatic reimport respects a notebook manually moved to Documents.');
   const shot = await send('Page.captureScreenshot', { format: 'png' });
   await writeFile('/tmp/notesgood-import-check.png', Buffer.from(shot.data, 'base64'));
 } finally {

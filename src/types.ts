@@ -40,6 +40,8 @@ export interface Notebook {
   /** Fingerprint of an imported PDF; travels with sync to prevent importing it twice. */
   importHash?: string;
   importSourceId?: string;
+  /** A user-selected folder must not be reset by automatic Goodnotes imports. */
+  folderMoved?: boolean;
 }
 
 /** Full page height including any space added below. */
