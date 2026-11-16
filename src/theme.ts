@@ -8,6 +8,6 @@ export function applyTheme() {
   const t = themeSetting();
   const dark = t === 'dark' || (t === 'system' && !!mq?.matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  document.querySelector('meta[name=theme-color]')?.setAttribute('content', dark ? '#1b1a18' : '#f3f0e8');
+  document.querySelector('meta[name=theme-color]')?.setAttribute('content', dark ? '#15171b' : '#f6f7f9');
 }
 mq?.addEventListener?.('change', applyTheme);

@@ -1,5 +1,5 @@
 [Unit]
-Description=Notesgood stylus eraser and lasso buttons
+Description=Opplinotes stylus eraser and lasso buttons
 PartOf=graphical-session.target
 ConditionEnvironment=DISPLAY
 ConditionEnvironment=HYPRLAND_INSTANCE_SIGNATURE

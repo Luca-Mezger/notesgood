@@ -1,30 +1,30 @@
-# Notesgood
+# Opplinotes
 
 ## Install now
 
-Choose your platform to open Notesgood, then confirm installation in your browser:
+Choose your platform to open Opplinotes, then confirm installation in your browser:
 
-| Install Notesgood | Finish installing |
+| Install Opplinotes | Finish installing |
 | --- | --- |
 | **[Windows →](https://lucamezger.com/notesgood/)** | Open in Chrome → address-bar **Install** icon, or ⋮ → **Cast, save, and share → Install page as app**. |
 | **[Android →](https://lucamezger.com/notesgood/)** | Open in Chrome → ⋮ → **Install and create shortcut → Install** (or **Add to Home screen → Install**, depending on your version). |
 | **[iOS / iPadOS →](https://lucamezger.com/notesgood/)** | Open in Safari → **Share → Add to Home Screen → Add**. Leave **Open as Web App** on if shown. |
-| **[Linux / NixOS →](https://lucamezger.com/notesgood/)** | Open in Chrome/Chromium → **Install** in the address bar or **Install page as app** in the browser menu. Launch Notesgood from your desktop's app menu. |
+| **[Linux / NixOS →](https://lucamezger.com/notesgood/)** | Open in Chrome/Chromium → **Install** in the address bar or **Install page as app** in the browser menu. Launch Opplinotes from your desktop's app menu. |
 
 These links open the same installable web app (PWA); installation needs your confirmation.
 You can also [use it immediately in your browser](https://lucamezger.com/notesgood/) without installing.
 Browser help: [Chrome](https://support.google.com/chrome/answer/9658361?hl=en) ·
 [Safari on iPhone](https://support.apple.com/en-gb/guide/iphone/iphea86e5236/ios).
 
-## Why choose Notesgood over Goodnotes?
+## Why choose Opplinotes over Goodnotes?
 
 Built for handwritten lecture notes, PDF annotation, and maths. It may suit your workflow better if you want:
 
 - **Space beside your PDFs:** add an adjustable writing margin to every page, then expand it later without moving your ink.
 - **LaTeX beside your handwriting:** place rendered formulas anywhere, including in PDF margins, and use inline maths in text boxes.
 - **Linux and NixOS alongside your other devices:** use the same app on Windows, Android, iPhone, and iPad.
-- **Control over your notes:** notes are stored locally; optional sync uses your own PHP or Node server and a secret key, with no Notesgood account required. Publishing this code does not publish your notes.
-- **Free, open source, and customisable:** MIT-licensed code, no Notesgood subscription. Self-hosted sync requires hosting.
+- **Control over your notes:** notes are stored locally; optional sync uses your own PHP or Node server and a secret key, with no Opplinotes account required. Publishing this code does not publish your notes.
+- **Free, open source, and customisable:** MIT-licensed code, no Opplinotes subscription. Self-hosted sync requires hosting.
 - **An easier move from Goodnotes:** import exported PDFs, folders, or ZIPs while keeping folder structure; watch a PDF backup folder in supported browsers.
 
 Also includes pressure-sensitive ink, highlighting, shapes, a lasso, folders, dark mode, PDF export,
@@ -40,20 +40,20 @@ These screenshots show the running app with sample notebooks and a demo lecture 
 
 Read a PDF and write beside it in an adjustable margin.
 
-![Notesgood showing a lecture PDF with highlights, formulas, and notes in the side margin](docs/screenshots/pdf-annotation.png)
+![Opplinotes showing a lecture PDF with highlights and handwriting in the side margin](docs/screenshots/pdf-annotation.png)
 
-### Notes and LaTeX
+### Handwritten notes
 
-Combine ink, diagrams, text, and rendered formulas on a notebook page.
+Write and sketch on a notebook page; text and rendered LaTeX formulas can be added alongside your ink.
 
-![Notesgood notebook editor with a vector diagram and rendered LaTeX formulas](docs/screenshots/notebook.png)
+![Opplinotes notebook editor with handwriting and geometric shapes](docs/screenshots/notebook.png)
 
 ### Notebook library
 
 Start with large folder tiles, open subfolders, and drag notebooks or entire folders to move them.
 Sort by name, last edit, or creation date in either direction; your choice is remembered.
 
-![Notesgood library with sample notebooks, folders, favourites, and search](docs/screenshots/library.png)
+![Opplinotes library with sample notebook covers and search](docs/screenshots/library.png)
 
 ## Run it
 
@@ -91,7 +91,7 @@ chrome: `chromium --app=http://localhost:5173`. In Firefox on X11, pen pressure 
 On Hyprland/XWayland, `scripts/notesgood-pen.py` bridges the integrated pen's eraser
 button to the eraser and its second button to the lasso. It needs Python with
 `python-xlib` and a window class of `notesgood`. Run it in the graphical session
-(or as a user service). It only targets the focused Notesgood window; after
+(or as a user service). It only targets the focused Opplinotes window; after
 releasing the lasso button, the selection stays marked and can be moved repeatedly
 until you tap outside it.
 The installed desktop launcher calls `ensurePenBridge()` from `scripts/ensure-pen.mjs` before
@@ -129,7 +129,7 @@ install it from the browser's menu and use it offline.
 ## Installing it as an app
 
 Use the [installation links at the top](#install-now) for Windows, Android, iOS/iPadOS, and Linux/NixOS.
-The browser installs Notesgood with its own icon and app window. Notes are stored on the device;
+The browser installs Opplinotes with its own icon and app window. Notes are stored on the device;
 offline use is available after the app and required resources have loaded over HTTPS.
 
 There are currently no separate `.exe`, APK, or Linux package downloads. An Android APK can be built
@@ -215,7 +215,7 @@ this as a per-notebook workflow; you do not need a full-library export to start 
 See [Goodnotes' export instructions](https://support.goodnotes.com/hc/en-us/articles/7353742824975-Export-documents-or-pages).
 
 **On the installed Nix desktop:** completed PDF downloads from the dedicated Goodnotes browser app
-are picked up automatically from Downloads while Notesgood's library is open, checked every minute.
+are picked up automatically from Downloads while the Opplinotes library is open, checked every minute.
 Pause, resume, or check imports under **From Goodnotes**. The local helper uses Node 24 and reads a private snapshot of
 the Fleet Goodnotes profile's download history; it imports only completed PDFs actually downloaded
 from `web.goodnotes.com`. Unrelated downloads and PDFs merely prepared for Goodnotes are ignored.
@@ -229,7 +229,7 @@ Separate inbox entries retain separate notebook identities even if their PDFs ar
 imports and cover generation also continue while the desktop window is hidden.
 
 **For PDF backups:** choose **Watch a backup folder…** and select a local PDF backup folder. In supported
-browsers, Notesgood remembers that folder and checks for new or changed PDFs while the library is open.
+browsers, Opplinotes remembers that folder and checks for new or changed PDFs while the library is open.
 The browser may ask you to reconnect the folder after restarting. Goodnotes Auto Backup must use PDF
 or PDF + Goodnotes format; a native `.goodnotes` backup alone cannot be imported.
 

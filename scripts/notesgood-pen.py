@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bridge XWayland tablet eraser/side-button events to Notesgood on Hyprland.
+"""Bridge XWayland tablet eraser/side-button events to Opplinotes on Hyprland.
 
 Requires python-xlib. Reads tablet tool/button events only, never keyboard events
 or coordinates. Does not change device mappings or other applications.
@@ -45,7 +45,7 @@ class Hyprland:
         address = self.active()
         if not address or (expected is not None and expected != address):
             return None
-        # Dedicated chords are intercepted before editable fields in Notesgood.
+        # Dedicated chords are intercepted before editable fields in Opplinotes.
         # Plain letters can be swallowed by a text editor (or typed into it).
         if self.request(f'/dispatch sendshortcut CTRL ALT SHIFT, {key}, address:{address}').strip() == 'ok':
             return address
@@ -150,7 +150,7 @@ def run():
             return devices
 
         devices = refresh()
-        print('Notesgood pen bridge ready', flush=True)
+        print('Opplinotes pen bridge ready', flush=True)
         while running:
             state.reconcile()
             if not connection.pending_events() and not select.select([connection.fileno()], [], [], 0.25)[0]:
@@ -174,5 +174,5 @@ if __name__ == '__main__':
     try:
         run()
     except (OSError, KeyError, ValueError, ImportError):
-        print('Notesgood pen bridge: XWayland/Hyprland or python-xlib unavailable', file=sys.stderr)
+        print('Opplinotes pen bridge: XWayland/Hyprland or python-xlib unavailable', file=sys.stderr)
         sys.exit(1)

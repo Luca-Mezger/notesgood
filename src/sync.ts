@@ -1,4 +1,4 @@
-// Sync with a Notesgood sync server (server/sync.php or server/sync.mjs).
+// Sync with an Opplinotes sync server (server/sync.php or server/sync.mjs).
 //
 // Every local change is recorded in the `dirty` store by db.ts. A sync pushes those items, then pulls
 // everything the server has seen since our last pull. Conflicts are last-write-wins per notebook / page.

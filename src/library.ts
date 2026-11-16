@@ -79,13 +79,13 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
     { label: 'Sync settings…', icon: 'cloud', action: syncDialog },
     { label: 'Import from Goodnotes…', icon: 'import', action: goodnotesHelp },
     { label: 'Import a folder of PDFs…', icon: 'folder', action: () => dirInput.click() },
-    { label: 'Back up all notebooks', icon: 'export', action: () => backup(notebooks, 'Notesgood backup ' + new Date().toISOString().slice(0, 10)) },
+    { label: 'Back up all notebooks', icon: 'export', action: () => backup(notebooks, 'Opplinotes backup ' + new Date().toISOString().slice(0, 10)) },
     { label: 'Restore from backup…', icon: 'import', action: () => fileInput.click() },
   ]));
 
   const view = h('div', { class: 'library' },
     h('header', { class: 'lib-head' },
-      h('h1', null, 'Notesgood'),
+      h('h1', null, 'Opplinotes'),
       h('label', { class: 'search' }, icon('search', 18),
         h('input', { type: 'search', placeholder: 'Search notes', 'aria-label': 'Search notes', oninput: (e: Event) => { query = (e.target as HTMLInputElement).value.toLowerCase(); renderGrid(); } })),
       h('div', { class: 'lib-actions' },
@@ -183,7 +183,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       ...[['0', 'Keep the original page layout'], ['0.5', 'Add half a page of writing space'], ['1', 'Add a full page of writing space']].map(([value, label]) =>
         h('option', { value, selected: Number(value) === goodnotesMargin() }, label)));
     const body = h('div', { class: 'form' },
-      h('p', null, 'Choose exported PDFs, a ZIP, or a whole folder. Notesgood keeps folders and skips PDFs you have already imported.'),
+      h('p', null, 'Choose exported PDFs, a ZIP, or a whole folder. Opplinotes keeps folders and skips PDFs you have already imported.'),
       h('label', null, 'Page layout', space),
       h('div', { class: 'import-choices' },
         h('button', { class: 'btn primary', type: 'button', onclick: () => { quickPick = true; fileInput.click(); } }, 'Choose PDFs or ZIP'),
@@ -719,13 +719,13 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
     toast(summary);
   }
 
-  /** Entry point for everything picked or dropped: PDFs, ZIPs of PDFs, folders, and Notesgood backups. */
+  /** Entry point for everything picked or dropped: PDFs, ZIPs of PDFs, folders, and Opplinotes backups. */
   async function importFiles(files: { file: File; path: string }[], quick = false, locked = false, destination?: string): Promise<void> {
     if (importing || scanning) { toast('An import is already running. Please wait for it to finish.'); return; }
     if (!locked && navigator.locks) {
       await navigator.locks.request('notesgood-import', { ifAvailable: true }, async (lock) => {
         if (lock) await importFiles(files, quick, true, destination);
-        else toast('An import is running in another Notesgood window. Please wait for it to finish.');
+        else toast('An import is running in another Opplinotes window. Please wait for it to finish.');
       });
       return;
     }
@@ -760,8 +760,8 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       }
       if (srcs.length === 1 && !skipped && !quick) await importPdf(srcs[0], destination);
       else if (srcs.length) await importMany(srcs, skipped, quick, false, destination);
-      else if (skipped) await modal({ title: 'These files need a PDF export', body: 'These are native Goodnotes documents. In Goodnotes Web, open each notebook → Share → Export as PDF. Save it to Downloads and the local Notesgood app will pick it up automatically. On iPad or Mac you can also export selected folders as PDFs.', ok: 'OK', cancel: null });
-      else if (!restored) toast('Nothing to import: choose PDFs, a ZIP of PDFs, or a Notesgood backup.');
+      else if (skipped) await modal({ title: 'These files need a PDF export', body: 'These are native Goodnotes documents. In Goodnotes Web, open each notebook → Share → Export as PDF. Save it to Downloads and the local Opplinotes app will pick it up automatically. On iPad or Mac you can also export selected folders as PDFs.', ok: 'OK', cancel: null });
+      else if (!restored) toast('Nothing to import: choose PDFs, a ZIP of PDFs, or an Opplinotes backup.');
       if (unreadable) toast(`${unreadable} ${unreadable === 1 ? 'file could' : 'files could'} not be read. Other selected files were still imported.`);
     } catch (e: any) { console.error(e); toast('Import failed: ' + (e?.message ?? e)); }
     finally { importing = false; }

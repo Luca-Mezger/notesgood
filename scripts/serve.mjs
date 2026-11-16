@@ -30,4 +30,4 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end('Not found');
   }
-}).listen(port, '0.0.0.0', () => console.log(`Notesgood running at http://localhost:${port}`));
+}).listen(port, '0.0.0.0', () => console.log(`Opplinotes running at http://localhost:${port}`));

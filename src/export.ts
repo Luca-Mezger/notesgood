@@ -136,7 +136,7 @@ export async function exportPdf(nb: Notebook, pages: Page[], onProgress?: (done:
   const L = await import('pdf-lib');
   const doc = await L.PDFDocument.create();
   doc.setTitle(nb.title);
-  doc.setCreator('Notesgood');
+  doc.setCreator('Opplinotes');
   const sources = new Map<string, Promise<import('pdf-lib').PDFDocument | null>>();
   const source = (id: string) => {
     let s = sources.get(id);
@@ -295,10 +295,10 @@ export async function isBackup(file: Blob): Promise<boolean> {
 
 /** Restores notebooks from a backup file as new copies (nothing existing is overwritten). Returns how many. */
 export async function importBackup(file: Blob): Promise<number> {
-  if (!(await isBackup(file))) throw new Error('Not a Notesgood backup file');
+  if (!(await isBackup(file))) throw new Error('Not an Opplinotes backup file');
   const len = new DataView(await file.slice(4, 8).arrayBuffer()).getUint32(0, true);
   const header = JSON.parse(await file.slice(8, 8 + len).text()) as Header;
-  if (header.v !== 1) throw new Error('This backup was made by a newer version of Notesgood');
+  if (header.v !== 1) throw new Error('This backup was made by a newer version of Opplinotes');
 
   const ids = new Map<string, string>();
   const map = (id: string) => { let n = ids.get(id); if (!n) ids.set(id, (n = uid())); return n; };

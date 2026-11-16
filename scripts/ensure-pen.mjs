@@ -13,7 +13,7 @@ export function ensurePenBridge({ env = process.env, run = execFileSync, warn = 
     return true;
   } catch {
     // Pen support must not prevent opening the notebook library.
-    warn('Notesgood: pen buttons could not be started; check notesgood-pen.service.');
+    warn('Opplinotes: pen buttons could not be started; check notesgood-pen.service.');
     return false;
   }
 }

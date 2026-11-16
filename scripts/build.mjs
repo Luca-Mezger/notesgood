@@ -55,7 +55,7 @@ if (serve) {
   const ctx = await esbuild.context(options);
   await ctx.watch();
   const { hosts, port } = await ctx.serve({ servedir: dist, port: 5173, host: '0.0.0.0' });
-  console.log(`\n  Notesgood dev server: http://localhost:${port}  (hosts: ${hosts.join(', ')})\n`);
+  console.log(`\n  Opplinotes dev server: http://localhost:${port}  (hosts: ${hosts.join(', ')})\n`);
 } else {
   await esbuild.build(options);
 }
