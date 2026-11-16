@@ -1,0 +1,16 @@
+[Unit]
+Description=Notesgood stylus eraser and lasso buttons
+PartOf=graphical-session.target
+ConditionEnvironment=DISPLAY
+ConditionEnvironment=HYPRLAND_INSTANCE_SIGNATURE
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/notesgood/pen-python/bin/python3 %h/.local/share/notesgood/scripts/notesgood-pen.py
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=3
+UMask=0077
+
+[Install]
+WantedBy=default.target graphical-session.target

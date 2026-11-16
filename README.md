@@ -94,6 +94,10 @@ button to the eraser and its second button to the lasso. It needs Python with
 (or as a user service). It only targets the focused Notesgood window; after
 releasing the lasso button, the selection stays marked and can be moved repeatedly
 until you tap outside it.
+The installed desktop launcher calls `ensurePenBridge()` from `scripts/ensure-pen.mjs` before
+opening the app. This refreshes the display environment and restarts only `notesgood-pen.service`,
+so buttons work after a reboot even when Hyprland leaves `graphical-session.target` inactive.
+The user-unit template in `scripts/notesgood-pen.service` also supports `default.target` startup.
 
 ## Sync between devices
 
