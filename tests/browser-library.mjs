@@ -746,6 +746,85 @@ try {
   assert.deepEqual(await saveMousePage(),inkBeforeResolutionChange,'Resolution, monitor and zoom changes must preserve every original ink sample');
   console.log('PASS: live and saved ink use supersampling, refresh at a new display density without moving the page, and stay within a bounded memory budget at maximum zoom.');
 
+  await click('[aria-label="Back to library"]');
+  await until("!!document.querySelector('.library')");
+  await chooseView('all');
+  await click(`[data-notebook="${pdfId}"] .cover`);
+  await until("!!document.querySelector('.editor')");
+  if(!await evaluate("document.querySelector('.editor').classList.contains('with-thumbs')")) await click('[aria-label="Pages"]');
+  const pdfPageId=originalPages[0].id, pdfPageIndex=pageOrder.indexOf(pdfPageId);
+  await click(`.thumb[data-i="${pdfPageIndex}"]`);
+  await click('.zoom');
+  const beforeExtension=await evaluate(`readRecord('pages',${JSON.stringify(pdfPageId)})`);
+  const initialHeight=beforeExtension.h+(beforeExtension.ext??0);
+  const pdfEdgePoint = async gap => {
+    await evaluate(`(()=>{
+      const v=document.querySelector('.viewport'),p=document.querySelectorAll('.page')[${pdfPageIndex}];
+      v.scrollTop+=p.getBoundingClientRect().bottom-v.getBoundingClientRect().bottom+50;
+      v.scrollLeft=0;
+    })()`);
+    await delay(50);
+    return evaluate(`(()=>{
+      const r=document.querySelectorAll('.page')[${pdfPageIndex}].getBoundingClientRect();
+      const z=Number(document.querySelector('.pages').style.getPropertyValue('--z'));
+      return {x:r.left+100*z,y:r.bottom-${gap}*z};
+    })()`);
+  };
+  const pdfHeight = () => evaluate(`Number(document.querySelectorAll('.page')[${pdfPageIndex}].style.getPropertyValue('--h'))`);
+  const extensionSaved = async height => {
+    await evaluate("window.dispatchEvent(new Event('pagehide'))");
+    await until(`readRecord('pages',${JSON.stringify(pdfPageId)}).then(p=>p.h+(p.ext??0)===${height})`);
+  };
+  await pdfEdgePoint(100);
+  assert.equal(await evaluate("!!document.querySelector('.modal-back')"),false,'Opening or scrolling near the end must not ask for extra space');
+  await toolKey('p');
+  let edge=await pdfEdgePoint(100);
+  await penGesture(edge,{x:edge.x+20,y:edge.y});
+  assert.equal(await evaluate("!!document.querySelector('.modal-back')"),false,'Writing with ample space remaining must not show a prompt');
+  edge=await pdfEdgePoint(20);
+  await send('Input.dispatchMouseEvent',{type:'mousePressed',...edge,button:'left',pointerType:'pen',force:0.5,clickCount:1});
+  await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:edge.x+20,y:edge.y,button:'left',buttons:1,pointerType:'pen',force:0.5});
+  assert.equal(await evaluate("!!document.querySelector('.modal-back')"),false,'The question must wait until the stroke is finished');
+  await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:edge.x+20,y:edge.y,button:'left',pointerType:'pen',force:0,clickCount:1});
+  await until("document.querySelector('.modal h2')?.textContent==='More space below?'");
+  assert.equal(await pdfHeight(),initialHeight,'Reaching the edge must never extend the page automatically');
+  await extensionSaved(initialHeight);
+  await evaluate("[...document.querySelectorAll('.modal-actions button')].find(b=>b.textContent==='Not now').click()");
+  edge=await pdfEdgePoint(18);
+  await penGesture(edge,{x:edge.x+20,y:edge.y});
+  assert.equal(await evaluate("!!document.querySelector('.modal-back')"),false,'Declining must not interrupt every subsequent stroke with the same question');
+  assert.equal(await pdfHeight(),initialHeight);
+  await click('[aria-label="Writing space beside PDF pages"]');
+  await evaluate("[...document.querySelectorAll('.popover button')].find(b=>b.textContent==='Add half a page').click()");
+  await shortcut('Escape');
+  const halfPage=Math.round(beforeExtension.h/2);
+  assert.equal(await pdfHeight(),initialHeight+halfPage,'Manual extension remains available after declining');
+  edge=await pdfEdgePoint(20);
+  await penGesture(edge,{x:edge.x+20,y:edge.y});
+  await until("document.querySelector('.modal h2')?.textContent==='More space below?'");
+  assert.equal(await pdfHeight(),initialHeight+halfPage,'A new edge must also wait for confirmation');
+  await click('.modal-actions .primary');
+  await until(`Number(document.querySelectorAll('.page')[${pdfPageIndex}].style.getPropertyValue('--h'))===${initialHeight+halfPage*2}`);
+  await extensionSaved(initialHeight+halfPage*2);
+  const afterExtension=await evaluate(`readRecord('pages',${JSON.stringify(pdfPageId)})`);
+  assert.deepEqual(afterExtension.bg,beforeExtension.bg);
+  assert.deepEqual(afterExtension.els.slice(0,beforeExtension.els.length),beforeExtension.els,'Extending must preserve existing handwriting');
+  assert.equal(afterExtension.els.length,beforeExtension.els.length+4,'Strokes made before declining or accepting must all be saved');
+  await click('[aria-label="Settings"]');
+  await evaluate("[...document.querySelectorAll('.popover label')].find(l=>l.textContent.includes('Ask for more space below')).querySelector('input').click()");
+  await shortcut('Escape');
+  edge=await pdfEdgePoint(20);
+  await penGesture(edge,{x:edge.x+20,y:edge.y});
+  assert.equal(await evaluate("!!document.querySelector('.modal-back')"),false,'The prompt can be disabled in settings');
+  assert.equal(await pdfHeight(),initialHeight+halfPage*2,'Disabling questions must never restore automatic growth');
+  await extensionSaved(initialHeight+halfPage*2);
+  await send('Page.reload');
+  await until("!!document.querySelector('.editor')");
+  assert.equal(await pdfHeight(),initialHeight+halfPage*2,'Only explicitly approved space survives reloading');
+  assert.equal(await evaluate("JSON.parse(localStorage.getItem('margin.tools')).grow"),false);
+  assert.equal(await evaluate("!!document.querySelector('.modal-back')"),false);
+  console.log('PASS: PDF space is offered only after writing near the edge, never grows without approval, respects declining and disabling, and preserves ink across reload.');
+
   assert.deepEqual(exceptions, [], 'No uncaught exceptions while restoring positions');
   console.log('PASS: invalid saved positions fall back safely without blocking the PDF.');
 } finally {

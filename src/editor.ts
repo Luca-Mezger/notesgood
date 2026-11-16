@@ -8,7 +8,7 @@ import {
 } from './render';
 import { makeCover, renderThumb } from './thumb';
 import { pageH, pageW, uid, type EditorHistory, type El, type ImageEl, type Notebook, type Page, type SavedOp, type ShapeKind, type TexEl, type TextEl, type Tpl } from './types';
-import { confirmDlg, download, h, icon, iconBtn, menu, popover, toast } from './ui';
+import { confirmDlg, download, h, icon, iconBtn, menu, modal, popover, toast } from './ui';
 import { sync, syncEnabled } from './sync';
 import { inkToPng, recogReady, recognize as recogInk, RECOG_MODELS, recogConfig, saveRecogConfig, type RecogProvider } from './recognize';
 import { applyTheme, themeSetting, setThemeSetting } from './theme';
@@ -41,7 +41,7 @@ interface Settings {
   toolbar: 'top' | 'left';
   /** 0 = raw input, 1 = heavy smoothing of pen strokes. */
   smooth: number;
-  /** PDF pages grow downward when you write near their bottom edge. */
+  /** Offer more space when writing near the bottom of a PDF; always ask first. */
   grow: boolean;
   snapGrid: boolean;
 }
@@ -1195,19 +1195,33 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     return true;
   }
 
-  // ---------- growing pages ----------
-  let grewOnce = false;
-  /** Adds half a page of space below a PDF page when something is placed near its bottom edge. */
-  function maybeGrow(pv: PV, bottom: number) {
-    if (!ts.grow || pv.page.bg.k !== 'pdf') return;
-    const H = pageH(pv.page);
-    if (bottom < H - 40) return;
+  // ---------- extra space below PDF pages ----------
+  let extensionPromptOpen = false;
+  const offeredHeights = new Map<Page, number>();
+  function addSpaceBelow(pv: PV) {
     pv.page.ext = (pv.page.ext ?? 0) + Math.round(pv.page.h / 2);
     sizePV(pv);
     renderPV(pv);
     markDirty(pv.page);
     updateSelBox();
-    if (!grewOnce) { grewOnce = true; toast('Page extended downward. It grows as you write; remove empty space from the margin menu.'); }
+  }
+  /** Ask after a completed action near the edge, once per page height in this editor session. */
+  async function maybeGrow(pv: PV, bottom: number) {
+    if (!ts.grow || pv.page.bg.k !== 'pdf' || closed || act || extensionPromptOpen || document.querySelector('.modal-back')) return;
+    const page = pv.page, height = pageH(page);
+    if (bottom < height - Math.min(40, page.h * 0.1) || offeredHeights.get(page) === height) return;
+    offeredHeights.set(page, height);
+    extensionPromptOpen = true;
+    try {
+      const accepted = await modal({
+        title: 'More space below?', body: 'You’re close to the bottom of this PDF page. Add half a page of writing space?',
+        ok: 'Add space', cancel: 'Not now',
+      });
+      // The editor may have closed or rebuilt its pages while the dialog was open.
+      if (!accepted || closed || !ts.grow || !pages.includes(page) || pageH(page) !== height) return;
+      const current = pvOf.get(page);
+      if (current) addSpaceBelow(current);
+    } finally { extensionPromptOpen = false; }
   }
   function trimPage(pv: PV) {
     const p = pv.page;
@@ -1620,7 +1634,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       h('button', { class: 'btn small', type: 'button', onclick: () => setZoom(fitZoom(false), 0, 0, true) }, 'Fit to width'),
       h('label', null, 'Space below this page'),
       h('div', { class: 'row' },
-        h('button', { class: 'btn small', type: 'button', onclick: () => { const pv = pvs[curIdx]; pv.page.ext = (pv.page.ext ?? 0) + Math.round(pv.page.h / 2); sizePV(pv); renderPV(pv); markDirty(pv.page); } }, 'Add half a page'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => addSpaceBelow(pvs[curIdx]) }, 'Add half a page'),
         h('button', { class: 'btn small', type: 'button', onclick: () => trimPage(pvs[curIdx]) }, 'Remove empty space'))));
   }
 
@@ -1641,7 +1655,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       toggle('Snap to printed text', 'Underlines and straight highlights on PDF pages follow the text lines, with matching thickness', () => ts.textSnap, (v) => { ts.textSnap = v; if (v) for (const pv of pvs) pv.lines = null; }),
       h('label', null, 'Stroke smoothing'),
       (() => { const o = h('output', null, Math.round(ts.smooth * 100) + '%'); const s = h('input', { type: 'range', min: 0, max: 1, step: 0.05, value: ts.smooth, 'aria-label': 'Stroke smoothing', oninput: () => { ts.smooth = Number(s.value); o.textContent = Math.round(ts.smooth * 100) + '%'; saveSettings(); } }); return h('div', { class: 'row slider-row' }, s, o); })(),
-      toggle('Pages grow downward', 'PDF pages get more space below when you write near the bottom edge', () => ts.grow, (v) => (ts.grow = v)),
+      toggle('Ask for more space below', 'Offer extra writing space only when you reach the bottom of a PDF page', () => ts.grow, (v) => (ts.grow = v)),
       h('label', null, 'Appearance'),
       h('div', { class: 'seg tight' }, ...([['system', 'System'], ['light', 'Light'], ['dark', 'Dark']] as const).map(([v, label]) =>
         h('button', { type: 'button', class: themeSetting() === v ? 'active' : '', onclick: (e: Event) => { setThemeSetting(v); applyTheme(); const seg = (e.currentTarget as HTMLElement).parentElement!; seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === e.currentTarget)); } }, label))),
