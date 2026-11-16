@@ -98,6 +98,7 @@ The installed desktop launcher calls `ensurePenBridge()` from `scripts/ensure-pe
 opening the app. This refreshes the display environment and restarts only `notesgood-pen.service`,
 so buttons work after a reboot even when Hyprland leaves `graphical-session.target` inactive.
 The user-unit template in `scripts/notesgood-pen.service` also supports `default.target` startup.
+The bridge uses dedicated tool shortcuts that also work while a text field has focus.
 
 ## Sync between devices
 

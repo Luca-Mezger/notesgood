@@ -1851,6 +1851,15 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     requestAnimationFrame(sizeLive);
   }
 
+  function onPenShortcut(e: KeyboardEvent) {
+    if (!e.ctrlKey || !e.altKey || !e.shiftKey || e.metaKey) return;
+    const tool = ({ e: 'eraser', l: 'select', p: 'pen' } as const)[e.key.toLowerCase() as 'e' | 'l' | 'p'];
+    if (!tool) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (!document.querySelector('.modal-back')) setTool(tool);
+  }
+
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement;
     if (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || document.querySelector('.modal-back')) return;
@@ -1875,6 +1884,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const onPageHide = () => { savePosition(); void flush(); };
   const pushTimer = window.setInterval(async () => { if (syncEnabled() && navigator.onLine && (dirty.size || (await db.dirty()).length)) { await flush(); sync(true); } }, 45000);
   const ro = new ResizeObserver(() => { sizeLive(); });
+  document.addEventListener('keydown', onPenShortcut, true);
   document.addEventListener('keydown', onKey);
   document.addEventListener('paste', onPaste);
   viewport.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
@@ -1909,6 +1919,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       cancelAnimationFrame(scrollRaf);
       editing?.finish();
       cancelAction();
+      document.removeEventListener('keydown', onPenShortcut, true);
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('paste', onPaste);
       offImage();

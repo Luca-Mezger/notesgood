@@ -276,11 +276,24 @@ try {
   assert.equal(request.body.store, false);
   assert.match(request.body.input[0].content[0].image_url, /^data:image\/png;base64,/);
   const shortcut = (key, extra = {}) => evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true,...${JSON.stringify(extra)}}))`);
+  const penShortcut = key => shortcut(key, {ctrlKey:true,altKey:true,shiftKey:true});
   const tap = async p => {
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...p, button: 'left', clickCount: 1 });
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...p, button: 'left', clickCount: 1 });
   };
   const formulaPoint = () => evaluate("(()=>{const r=document.querySelector('.obj.tex').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
+  const titleBeforePen = await evaluate("document.querySelector('[aria-label=\"Notebook title\"]').value");
+  await evaluate("document.querySelector('[aria-label=\"Notebook title\"]').focus()");
+  await penShortcut('l');
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"),'select','The pen button must work while the notebook title has focus');
+  await penShortcut('e');
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"),'eraser');
+  await penShortcut('p');
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"),'pen');
+  assert.equal(await evaluate("document.querySelector('[aria-label=\"Notebook title\"]').value"),titleBeforePen,'Pen shortcuts never type tool letters into the title');
+  await evaluate("document.querySelector('[aria-label=\"Notebook title\"]').blur()");
+  await shortcut('l');
+  await tap(await formulaPoint());
   const assertFormula = async source => {
     assert.equal(await evaluate("document.querySelectorAll('.obj.tex').length"), 1, 'Undo must never leave duplicate formulas');
     await evaluate("window.dispatchEvent(new Event('pagehide'))");
@@ -288,6 +301,16 @@ try {
   };
   assert.equal(await evaluate("[...document.querySelectorAll('.optbar button')].some(b=>b.textContent==='Restore handwriting')"), true);
   await shortcut('m');
+  await tap(await formulaPoint());
+  await click('[aria-label="Edit selected object"]');
+  await until("!!document.querySelector('.tex-panel textarea')");
+  // The LaTeX textarea stops ordinary key events; the hardware chord must reach
+  // the editor first, close the source panel and switch to lasso without typing.
+  const formulaBeforePen=await evaluate("document.querySelector('.tex-panel textarea').value");
+  await penShortcut('l');
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"),'select');
+  assert.equal(await evaluate("!!document.querySelector('.tex-panel')"),false);
+  assert.equal(formulaBeforePen,'x^2 + y^2 = 1');
   await tap(await formulaPoint());
   await click('[aria-label="Edit selected object"]');
   await until("!!document.querySelector('.tex-panel textarea')");
@@ -641,6 +664,10 @@ try {
   await click('[aria-label="Edit selected object"]');
   await until("!!document.querySelector('.obj.txt.editing')");
   await evaluate("document.querySelector('.obj.txt.editing').textContent='Corrected text'");
+  await penShortcut('l');
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"),'select');
+  assert.equal(await evaluate("!!document.querySelector('.obj.txt.editing')"),false,'The hardware lasso button also finishes a focused inline text editor');
+  await penShortcut('p');
   await mouseGesture(await pagePoint(400,360));
   mouseEls=await saveMousePage();
   assert.equal(mouseEls.find(e=>e.id==='mouse-text').text,'Corrected text');

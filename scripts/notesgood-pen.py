@@ -45,7 +45,9 @@ class Hyprland:
         address = self.active()
         if not address or (expected is not None and expected != address):
             return None
-        if self.request(f'/dispatch sendshortcut , {key}, address:{address}').strip() == 'ok':
+        # Dedicated chords are intercepted before editable fields in Notesgood.
+        # Plain letters can be swallowed by a text editor (or typed into it).
+        if self.request(f'/dispatch sendshortcut CTRL ALT SHIFT, {key}, address:{address}').strip() == 'ok':
             return address
         return None
 

@@ -115,7 +115,7 @@ class PenTests(unittest.TestCase):
         hypr.request.assert_not_called()
         hypr.active = Mock(return_value='0x123')
         self.assertEqual(hypr.switch('l', '0x123'), '0x123')
-        hypr.request.assert_called_once_with('/dispatch sendshortcut , l, address:0x123')
+        hypr.request.assert_called_once_with('/dispatch sendshortcut CTRL ALT SHIFT, l, address:0x123')
 
     def test_only_tablet_stylus_and_eraser_are_subscribed(self):
         names = ['xwayland-tablet stylus:1', 'xwayland-tablet eraser:1', 'xwayland-pointer:1', 'keyboard', 'xwayland-tablet cursor:1']
