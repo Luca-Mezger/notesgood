@@ -81,6 +81,12 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1050, deviceScaleFactor: 1, mobile: false });
   await send('Page.addScriptToEvaluateOnNewDocument', { source: `
     localStorage.setItem('goodnotes.auto','off');
+    const nativeMatchMedia=window.matchMedia.bind(window);
+    window.matchMedia=(query)=>{
+      const result=nativeMatchMedia(query);
+      if(query.startsWith('(resolution:')) window.resolutionQuery=result;
+      return result;
+    };
     window.readRecord=(store,key)=>new Promise((resolve,reject)=>{
       const open=indexedDB.open('margin');open.onerror=()=>reject(open.error);open.onsuccess=()=>{
         const db=open.result,q=db.transaction(store).objectStore(store).get(key);
@@ -686,6 +692,59 @@ try {
   assert.equal(await evaluate("!!document.querySelector('[aria-label=\"Edit selected object\"]')"),false,'Rebuilding pages clears mouse selection controls');
   assert.equal(await evaluate("!!document.querySelector('.optbar [aria-label=\"Thickness\"]')"),true,'The pen controls return after mouse selection is cleared');
   console.log('PASS: mouse never draws or erases; click selects formulas, text and pictures, drag moves them, double-click/Edit opens text, and the pen remains ready to write.');
+
+  const inkResolution = () => evaluate(`(()=>{
+    const page=document.querySelector('.page'), ink=page.querySelector('canvas.ink'), pics=page.querySelector('canvas.pics');
+    const rect=page.getBoundingClientRect(), live=document.querySelector('canvas.live'), lr=live.getBoundingClientRect();
+    return {width:ink.width,height:ink.height,cssWidth:rect.width,cssHeight:rect.height,pictureWidth:pics.width,
+      dpr:devicePixelRatio,maxPixels:((navigator.deviceMemory??4)>=8?16e6:9e6)*2,
+      liveWidth:live.width,liveHeight:live.height,liveCssWidth:lr.width,liveCssHeight:lr.height};
+  })()`);
+  const assertInkResolution = async (dpr) => {
+    const r=await inkResolution();
+    const scale=Math.min(dpr*2,Math.sqrt(r.maxPixels/(r.cssWidth*r.cssHeight)));
+    assert(Math.abs(r.width-r.cssWidth*scale)<2, 'Committed handwriting must be supersampled within its memory budget: '+JSON.stringify(r));
+    assert(Math.abs(r.height-r.cssHeight*scale)<2);
+    assert(r.width*r.height<=r.maxPixels*1.002, 'Large pages must respect the ink memory budget');
+    const liveScale=Math.max(dpr,Math.min(dpr*2,Math.sqrt(r.maxPixels/(r.liveCssWidth*r.liveCssHeight))));
+    assert(Math.abs(r.liveWidth-r.liveCssWidth*liveScale)<2, 'Live pen strokes must receive the same quality improvement');
+    assert(Math.abs(r.liveHeight-r.liveCssHeight*liveScale)<2);
+    assert(r.width>r.pictureWidth, 'Ink quality must not multiply the resolution of image/PDF layers');
+    assert.equal(await evaluate(`(()=>{
+      const page=document.querySelector('.page'), canvas=page.querySelector('canvas.ink');
+      const scale=canvas.width/Number(page.style.getPropertyValue('--w'));
+      return canvas.getContext('2d').getImageData(Math.round(20*scale),Math.round(30*scale),1,1).data[3]>0;
+    })()`),true,'Ink must remain painted at its original page coordinates');
+    assert.equal(await evaluate(`(async()=>{
+      const image=(await readRecord('pages','page-54')).els.find(e=>e.id==='mouse-image');
+      const page=document.querySelector('.page'), canvas=page.querySelector('canvas.pics');
+      const scale=canvas.width/Number(page.style.getPropertyValue('--w'));
+      return canvas.getContext('2d').getImageData(Math.floor((image.x+image.w/2)*scale),Math.floor((image.y+image.h/2)*scale),1,1).data[3]===255;
+    })()`),true,'Images must stay aligned when their layer uses a different resolution from ink');
+  };
+  const inkBeforeResolutionChange=await saveMousePage();
+  await evaluate("document.querySelector('.viewport').scrollTo(0,0)");
+  await delay(100);
+  await until('document.querySelector(".page canvas.ink").width>0');
+  await assertInkResolution(1);
+  const beforeDprChange=await readView();
+  const normalInkWidth=(await inkResolution()).width;
+  await send('Emulation.setDeviceMetricsOverride', {width:1440,height:1050,deviceScaleFactor:2,mobile:false});
+  // CDP changes devicePixelRatio without emitting the hardware media-query event.
+  await evaluate("window.resolutionQuery.dispatchEvent(new Event('change'))");
+  await until('devicePixelRatio===2 && document.querySelector(".page canvas.ink").width>'+normalInkWidth);
+  await assertInkResolution(2);
+  await assertView(beforeDprChange);
+  await send('Emulation.setDeviceMetricsOverride', {width:1440,height:1050,deviceScaleFactor:1,mobile:false});
+  await evaluate("window.resolutionQuery.dispatchEvent(new Event('change'))");
+  await until('devicePixelRatio===1 && document.querySelector(".page canvas.ink").width==='+normalInkWidth);
+  await assertInkResolution(1);
+  for(let i=0;i<12;i++) await shortcut('=',{ctrlKey:true});
+  await until('document.querySelector(".zoom").textContent==="600%"');
+  await delay(250);
+  await assertInkResolution(1);
+  assert.deepEqual(await saveMousePage(),inkBeforeResolutionChange,'Resolution, monitor and zoom changes must preserve every original ink sample');
+  console.log('PASS: live and saved ink use supersampling, refresh at a new display density without moving the page, and stay within a bounded memory budget at maximum zoom.');
 
   assert.deepEqual(exceptions, [], 'No uncaught exceptions while restoring positions');
   console.log('PASS: invalid saved positions fall back safely without blocking the PDF.');

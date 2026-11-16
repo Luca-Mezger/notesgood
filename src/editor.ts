@@ -85,6 +85,10 @@ const TOOLS: [Tool, string, string, string][] = [
 const MIN_ZOOM = 0.08, MAX_ZOOM = 6;
 /** Upper bound for one canvas's backing store, in pixels. Beyond this pages render slightly soft. */
 const MAX_PX = ((navigator as any).deviceMemory ?? 4) >= 8 ? 16e6 : 9e6;
+// Supersample thin ink independently of PDFs/images so handwriting has smoother
+// edges without multiplying the cost of every layer. Keep large pages bounded.
+const INK_OVERSAMPLE = 2;
+const MAX_INK_PX = MAX_PX * 2;
 
 /** Lasso selection copied with Ctrl+C; survives switching notebooks. */
 let clipboard: El[] = [];
@@ -119,6 +123,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
 
   let zoom = 1;
   let dpr = window.devicePixelRatio || 1;
+  let liveScale = dpr;
   let pvs: PV[] = [];
   const pvOf = new Map<Page, PV>();
   let curIdx = 0;
@@ -275,9 +280,12 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   function renderPV(pv: PV) {
     const w = pageW(pv.page, nb), hh = pageH(pv.page);
     const s = Math.min(zoom * dpr, Math.sqrt(MAX_PX / (w * hh)));
-    const cw = Math.round(w * s), ch = Math.round(hh * s);
-    if (pv.ink.width !== cw || pv.ink.height !== ch) { pv.ink.width = cw; pv.ink.height = ch; pv.pics.width = cw; pv.pics.height = ch; }
-    pv.scale = s;
+    const inkScale = Math.min(zoom * dpr * INK_OVERSAMPLE, Math.sqrt(MAX_INK_PX / (w * hh)));
+    const cw = Math.round(w * inkScale), ch = Math.round(hh * inkScale);
+    if (pv.ink.width !== cw || pv.ink.height !== ch) { pv.ink.width = cw; pv.ink.height = ch; }
+    const pw = Math.round(w * s), ph = Math.round(hh * s);
+    if (pv.pics.width !== pw || pv.pics.height !== ph) { pv.pics.width = pw; pv.pics.height = ph; }
+    pv.scale = inkScale;
     redrawInk(pv);
     renderBg(pv, s);
     if (!pv.built) buildObjs(pv);
@@ -305,7 +313,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     const pc = pv.pics.getContext('2d')!;
     pc.setTransform(1, 0, 0, 1, 0, 0);
     pc.clearRect(0, 0, pv.pics.width, pv.pics.height);
-    if (pv.page.els.some((e) => e.t === 'i')) { pc.setTransform(pv.scale, 0, 0, pv.scale, 0, 0); drawImages(pc, pv.page.els); }
+    if (pv.page.els.some((e) => e.t === 'i')) { const s = pv.pics.width / pageW(pv.page, nb); pc.setTransform(s, 0, 0, s, 0, 0); drawImages(pc, pv.page.els); }
   }
 
   function renderBg(pv: PV, s: number) {
@@ -501,9 +509,17 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   // ---------- live overlay ----------
   let liveClear = 0;
   function sizeLive() {
+    const previousDpr = dpr;
     dpr = window.devicePixelRatio || 1;
-    live.width = Math.round(stage.clientWidth * dpr);
-    live.height = Math.round(stage.clientHeight * dpr);
+    const area = Math.max(1, stage.clientWidth * stage.clientHeight);
+    liveScale = Math.max(dpr, Math.min(dpr * INK_OVERSAMPLE, Math.sqrt(MAX_INK_PX / area)));
+    const width = Math.round(stage.clientWidth * liveScale), height = Math.round(stage.clientHeight * liveScale);
+    if (live.width !== width || live.height !== height) {
+      live.width = width;
+      live.height = height;
+      if (act?.k === 'draw') { aimLive(act.pv); drawEls(lctx, [drawnEl(act)]); }
+    }
+    if (dpr !== previousDpr) for (const pv of pvs) if (pv.visible) renderPV(pv);
   }
   function clearLive() {
     cancelAnimationFrame(liveClear);
@@ -519,7 +535,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   /** Points the overlay's coordinate system at a page, so page coordinates can be drawn directly. */
   function aimLive(pv: PV) {
     const pr = pv.el.getBoundingClientRect(), sr = stage.getBoundingClientRect();
-    lctx.setTransform(zoom * dpr, 0, 0, zoom * dpr, (pr.left - sr.left) * dpr, (pr.top - sr.top) * dpr);
+    lctx.setTransform(zoom * liveScale, 0, 0, zoom * liveScale, (pr.left - sr.left) * liveScale, (pr.top - sr.top) * liveScale);
   }
 
   // ---------- persistence & undo ----------
@@ -1884,6 +1900,16 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const onPageHide = () => { savePosition(); void flush(); };
   const pushTimer = window.setInterval(async () => { if (syncEnabled() && navigator.onLine && (dirty.size || (await db.dirty()).length)) { await flush(); sync(true); } }, 45000);
   const ro = new ResizeObserver(() => { sizeLive(); });
+  // Moving between monitors or changing browser zoom can change DPR without
+  // changing the stage's CSS dimensions, so ResizeObserver alone is insufficient.
+  let resolutionQuery: MediaQueryList;
+  function watchResolution() {
+    resolutionQuery?.removeEventListener('change', onResolutionChange);
+    resolutionQuery = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    resolutionQuery.addEventListener('change', onResolutionChange);
+  }
+  function onResolutionChange() { sizeLive(); watchResolution(); }
+  watchResolution();
   document.addEventListener('keydown', onPenShortcut, true);
   document.addEventListener('keydown', onKey);
   document.addEventListener('paste', onPaste);
@@ -1927,6 +1953,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       window.removeEventListener('pagehide', onPageHide);
       clearInterval(pushTimer);
       ro.disconnect();
+      resolutionQuery.removeEventListener('change', onResolutionChange);
       io.disconnect();
       thumbIo.disconnect();
       for (const pv of pvs) pv.job?.cancel();
