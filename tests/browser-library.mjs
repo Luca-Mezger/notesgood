@@ -539,7 +539,7 @@ try {
   const pageOrder = originalPages.map(p => p.id);
   const newPages = [];
   await click('[aria-label="Pages"]');
-  const insertBlank = async (index, side, button = '.toolbar [aria-label="Add blank page"]') => {
+  const insertBlank = async (index, side, button = '.toolbar [aria-label="Add page or writing space"]') => {
     await click(`.thumb[data-i="${index}"]`);
     await until(`document.querySelector('.thumb.current')?.dataset.i==='${index}'`);
     await click(button);
@@ -566,7 +566,7 @@ try {
     return id;
   };
   await insertBlank(0, 'before');
-  const middleId = await insertBlank(4, 'after', '.thumb-actions [aria-label="Add blank page"]');
+  const middleId = await insertBlank(4, 'after', '.thumb-actions [aria-label="Add page or writing space"]');
   await insertBlank(pageOrder.length - 1, 'after');
   const afterInsert = await evaluate(`(async()=>Promise.all(${JSON.stringify(originalPages.map(p=>p.id))}.map(id=>readRecord('pages',id))))()`);
   assert.deepEqual(afterInsert, originalPages, 'Inserting pages must preserve original PDF references and existing ink exactly');
@@ -686,7 +686,7 @@ try {
   assert.equal((await saveMousePage()).filter(e=>e.t==='s').length,1,'The new pen stroke remains undoable');
   await mouseGesture(await formulaPoint());
   assert.equal(await evaluate("!!document.querySelector('[aria-label=\"Edit selected object\"]')"),true);
-  await click('.toolbar [aria-label="Add blank page"]');
+  await click('.toolbar [aria-label="Add page or writing space"]');
   await evaluate("[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Blank page after').click()");
   await until("document.querySelectorAll('.page').length===2");
   assert.equal(await evaluate("!!document.querySelector('[aria-label=\"Edit selected object\"]')"),false,'Rebuilding pages clears mouse selection controls');
@@ -794,9 +794,11 @@ try {
   await penGesture(edge,{x:edge.x+20,y:edge.y});
   assert.equal(await evaluate("!!document.querySelector('.modal-back')"),false,'Declining must not interrupt every subsequent stroke with the same question');
   assert.equal(await pdfHeight(),initialHeight);
-  await click('[aria-label="Writing space beside PDF pages"]');
-  await evaluate("[...document.querySelectorAll('.popover button')].find(b=>b.textContent==='Add half a page').click()");
-  await shortcut('Escape');
+  await click('.toolbar [aria-label="Add page or writing space"]');
+  // Keep the explicitly chosen page as the target even if scrolling changes the current page.
+  await evaluate("document.querySelector('.viewport').scrollTop+=2000");
+  await delay(50);
+  await evaluate("[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Add space below this PDF page').click()");
   const halfPage=Math.round(beforeExtension.h/2);
   assert.equal(await pdfHeight(),initialHeight+halfPage,'Manual extension remains available after declining');
   edge=await pdfEdgePoint(20);
@@ -824,6 +826,43 @@ try {
   assert.equal(await evaluate("JSON.parse(localStorage.getItem('margin.tools')).grow"),false);
   assert.equal(await evaluate("!!document.querySelector('.modal-back')"),false);
   console.log('PASS: PDF space is offered only after writing near the edge, never grows without approval, respects declining and disabling, and preserves ink across reload.');
+
+  await evaluate(`(async()=>{
+    const d=await new Promise(r=>{const q=indexedDB.open('margin');q.onsuccess=()=>r(q.result)});
+    const t=d.transaction(['notebooks','pages'],'readwrite');
+    const ink=(id,y)=>({t:'s',id,k:'pen',c:'#123456',s:2,p:new Float32Array(Array.from({length:21},(_,i)=>[50+i*20,y,.5]).flat()),bb:[48,y-2,452,y+2]});
+    t.objectStore('notebooks').put({id:'lasso-overlap',title:'Lasso overlap demo',folder:'',fav:false,created:1,updated:1,pages:['lasso-overlap-page'],margin:0,marginTpl:'blank',tpl:'blank',paper:'#fff'});
+    t.objectStore('pages').put({id:'lasso-overlap-page',nb:'lasso-overlap',w:595,h:842,bg:{k:'paper',tpl:'blank',color:'#fff'},els:[
+      ink('partly-enclosed',100),ink('untouched',180),
+      {t:'i',id:'locked-picture',x:220,y:95,w:40,h:30,blob:'mouse-image-blob',lock:true}
+    ]});
+    await new Promise((r,j)=>{t.oncomplete=r;t.onerror=()=>j(t.error)});d.close();location.hash='#/n/lasso-overlap';
+  })()`);
+  await until("document.querySelector('[aria-label=\"Notebook title\"]')?.value==='Lasso overlap demo'");
+  await until("document.querySelector('.page canvas.ink')?.width>0");
+  await toolKey('l');
+  const partialLoop=[];
+  for(const [x,y] of [[220,90],[260,90],[260,110],[220,110],[220,90]]) partialLoop.push(await pagePoint(x,y));
+  await send('Input.dispatchMouseEvent',{type:'mousePressed',...partialLoop[0],button:'left',pointerType:'pen',force:.5,clickCount:1});
+  for(const p of partialLoop.slice(1)) await send('Input.dispatchMouseEvent',{type:'mouseMoved',...p,button:'left',buttons:1,pointerType:'pen',force:.5});
+  await send('Input.dispatchMouseEvent',{type:'mouseReleased',...partialLoop.at(-1),button:'left',pointerType:'pen',force:0,clickCount:1});
+  await until("!!document.querySelector('.selbox')");
+  assert.equal(await evaluate("document.querySelector('.viewport').dataset.tool"),'select');
+  assert.equal(await evaluate("(()=>{const z=Number(document.querySelector('.pages').style.getPropertyValue('--z'));return document.querySelector('.selbox').getBoundingClientRect().width/z>390})()"),true,'Enclosing a short middle section selects the entire long stroke');
+  const beforePartialMove=await evaluate("readRecord('pages','lasso-overlap-page').then(p=>p.els)");
+  const startPartialMove=await pagePoint(240,100);
+  await penGesture(startPartialMove,{x:startPartialMove.x+60,y:startPartialMove.y+30});
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  const afterPartialMove=await evaluate("readRecord('pages','lasso-overlap-page').then(p=>p.els)");
+  assert(afterPartialMove[0].bb[0]>beforePartialMove[0].bb[0],'The partly enclosed stroke moves as a whole');
+  assert.deepEqual(afterPartialMove.slice(1),beforePartialMove.slice(1),'Untouched strokes and locked pictures stay unchanged');
+  assert.equal(await evaluate("!!document.querySelector('.selbox')"),true,'Partial lasso selections remain selected after moving');
+  await shortcut('z',{ctrlKey:true});
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  assert.deepEqual(await evaluate("readRecord('pages','lasso-overlap-page').then(p=>p.els)"),beforePartialMove,'Moving a partly enclosed stroke remains exactly undoable');
+  const lassoToolbar=await send('Page.captureScreenshot',{format:'png',clip:{x:0,y:0,width:1440,height:130,scale:1.5}});
+  await writeFile('/tmp/opplinotes-lasso-toolbar.png',Buffer.from(lassoToolbar.data,'base64'));
+  console.log('PASS: a partly enclosed stroke is fully selected and movable, locked pictures and untouched ink are excluded, and moving remains undoable.');
 
   assert.deepEqual(exceptions, [], 'No uncaught exceptions while restoring positions');
   console.log('PASS: invalid saved positions fall back safely without blocking the PDF.');

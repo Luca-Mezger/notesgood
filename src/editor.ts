@@ -166,7 +166,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const pageLabel = h('span', { class: 'page-label' });
   const thumbs = h('aside', { class: 'thumbs' },
     h('div', { class: 'thumb-actions' },
-      iconBtn('plus', 'Add blank page', (e) => addPageMenu(e.currentTarget as HTMLElement)),
+      iconBtn('plus', 'Add page or writing space', (e) => addPageMenu(e.currentTarget as HTMLElement)),
       iconBtn('up', 'Move page up', () => movePage(-1)),
       iconBtn('down', 'Move page down', () => movePage(1)),
       iconBtn('trash', 'Delete page', () => deletePage())),
@@ -179,7 +179,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const zoomBtn = h('button', { class: 'btn small zoom', type: 'button', title: 'Fit page to width', onclick: () => { setZoom(fitZoom(false), 0, 0, true); } });
   const fingerBtn = iconBtn('finger', '', () => { ts.fingerDraw = !ts.fingerDraw; saveSettings(); syncToggles(); toast(ts.fingerDraw ? 'Finger draws. Use two fingers to scroll and zoom.' : 'Finger scrolls. Only the stylus draws.'); });
   const sideBtn = iconBtn('pages', 'Pages', () => { ts.sidebar = !ts.sidebar; saveSettings(); syncToggles(); });
-  const addPageBtn = iconBtn('plus', 'Add blank page', (e) => addPageMenu(e.currentTarget as HTMLElement));
+  const addPageBtn = iconBtn('plus', 'Add page or writing space', (e) => addPageMenu(e.currentTarget as HTMLElement));
   const marginBtn = iconBtn('margin', 'Writing space beside PDF pages', () => marginPopover());
   const exportBtn: HTMLButtonElement = iconBtn('export', 'Export', () => menu(exportBtn, [
     { label: 'Export as PDF', icon: 'pdf', action: async () => {
@@ -1561,6 +1561,10 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   function addPageMenu(anchor: HTMLElement) {
     const current = pages[curIdx];
     menu(anchor, [
+      ...(current.bg.k === 'pdf' ? [{ label: 'Add space below this PDF page', icon: 'extend', action: () => {
+        const pv = pvOf.get(current);
+        if (!closed && pv) addSpaceBelow(pv);
+      } }] : []),
       { label: 'Blank page before', icon: 'up', action: () => addPage(current, 0) },
       { label: 'Blank page after', icon: 'down', action: () => addPage(current, 1) },
     ]);

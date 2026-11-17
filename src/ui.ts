@@ -30,10 +30,11 @@ const ICONS: Record<string, string> = {
   shape: 'M3 13h9v8H3zM16.5 3a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z',
   text: 'M5 6V4h14v2M12 4v16M9 20h6',
   tex: 'M17 6V4H6l6 8-6 8h11v-2',
-  lasso: 'M12 4c5 0 9 2.5 9 6s-4 6-9 6-9-2.5-9-6 4-6 9-6zM8 15.5c0 2-1 3.5-3 4.5',
+  lasso: 'M9 4c4.5-1 10.5 1.5 10.8 5.7.4 4.4-4.9 7.9-10 7.4-4.5-.4-7.3-2.9-6.4-6.6C4.1 7.5 6 4.8 9 4z',
   hand: 'M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3',
   pages: 'M4 4h16v16H4zM9 4v16',
   plus: 'M12 5v14M5 12h14',
+  extend: 'M5 3h14v11H5zM5 18v3h14v-3M12 14v5M9 17l3 3 3-3',
   trash: 'M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13M10 11v6M14 11v6',
   up: 'M6 15l6-6 6 6',
   down: 'M6 9l6 6 6-6',
@@ -70,7 +71,13 @@ export function icon(name: string, size = 20): SVGSVGElement {
   svg.setAttribute('aria-hidden', 'true');
   const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   p.setAttribute('d', ICONS[name] ?? '');
+  if (name === 'lasso') p.setAttribute('stroke-dasharray', '2.3 2.1');
   svg.append(p);
+  if (name === 'lasso') {
+    const tail = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    tail.setAttribute('d', 'M8.5 16.7c1.2 2.7-.1 4.4-2.4 4.4-1.4 0-2.2-.7-2.1-1.7');
+    svg.append(tail);
+  }
   return svg;
 }
 

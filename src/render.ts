@@ -238,14 +238,42 @@ export function inPoly(x: number, y: number, poly: number[]): boolean {
   return inside;
 }
 
-/** Lasso test: most of an element's points (or the centre of a text box) must lie inside. */
+/** True when two segments cross or their painted edges touch within radius r. */
+function segmentsTouch(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number, r: number): boolean {
+  if (Math.max(ax, bx) + r < Math.min(cx, dx) || Math.max(cx, dx) + r < Math.min(ax, bx) ||
+      Math.max(ay, by) + r < Math.min(cy, dy) || Math.max(cy, dy) + r < Math.min(ay, by)) return false;
+  const c1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+  const c2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+  const c3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+  const c4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+  if (((c1 > 0 && c2 < 0) || (c1 < 0 && c2 > 0)) && ((c3 > 0 && c4 < 0) || (c3 < 0 && c4 > 0))) return true;
+  const rr = r * r;
+  return segDist2(ax, ay, cx, cy, dx, dy) <= rr || segDist2(bx, by, cx, cy, dx, dy) <= rr ||
+    segDist2(cx, cy, ax, ay, bx, by) <= rr || segDist2(dx, dy, ax, ay, bx, by) <= rr;
+}
+
+/** Any enclosed or crossed ink selects its entire stroke; boxes still use their centre. */
 export function elInPoly(e: El, poly: number[]): boolean {
+  if (poly.length < 4) return false;
   if (e.t === 't' || e.t === 'x' || e.t === 'i') { const b = elBBox(e); return inPoly((b[0] + b[2]) / 2, (b[1] + b[3]) / 2, poly); }
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let i = 0; i < poly.length; i += 2) {
+    x0 = Math.min(x0, poly[i]); y0 = Math.min(y0, poly[i + 1]);
+    x1 = Math.max(x1, poly[i]); y1 = Math.max(y1, poly[i + 1]);
+  }
+  const bb = elBBox(e);
+  if (bb[2] < x0 || bb[0] > x1 || bb[3] < y0 || bb[1] > y1) return false;
   let pts: ArrayLike<number>, step: number;
   if (e.t === 's') { pts = e.p; step = 3; } else { pts = shapePoly(e); step = 2; }
-  let inside = 0, total = 0;
-  for (let i = 0; i < pts.length; i += step) { total++; if (inPoly(pts[i], pts[i + 1], poly)) inside++; }
-  return inside / total >= 0.7;
+  for (let i = 0; i < pts.length; i += step) {
+    const x = pts[i], y = pts[i + 1], prev = Math.max(0, i - step);
+    if (inPoly(x, y, poly)) return true;
+    const radius = e.t === 's' && e.k === 'pen' ? Math.max(penW(e.s, pts[i + 2]), penW(e.s, pts[prev + 2])) / 2 : e.s / 2;
+    for (let j = 0, k = poly.length - 2; j < poly.length; k = j, j += 2) {
+      if (segmentsTouch(pts[prev], pts[prev + 1], x, y, poly[k], poly[k + 1], poly[j], poly[j + 1], radius)) return true;
+    }
+  }
+  return false;
 }
 
 export function cloneEl<T extends El>(e: T, newId = false): T {

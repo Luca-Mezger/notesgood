@@ -154,7 +154,10 @@ from the hosted URL with Bubblewrap (Trusted Web Activity); see the deploy promp
 - **Mouse**: click to select formulas, text or pictures; drag to move them. Double-click text or a
   formula to edit it. The mouse never draws or erases; your stylus tool stays ready for writing.
 - **More space when needed**: writing near the bottom of a PDF page prompts you to add half a page
-  below. Nothing grows without your confirmation; you can also add or trim space from the margin menu.
+  below. Nothing grows without your confirmation. After declining, use **+ → Add space below this PDF page**
+  whenever you need it; the margin menu also lets you add or trim space.
+- **Lasso selection**: enclosing or crossing any part of handwriting selects its whole stroke, so
+  you do not need to trace around every line. The selection stays active for repeated moves.
 - **Handwriting → LaTeX / text**: lasso some handwriting and press *To LaTeX* or *To text*. This sends an
   image of the selected strokes to Claude or OpenAI, selected under Settings → Handwriting recognition.
   OpenAI supports GPT-5.4 mini and GPT-5.4 through the [Responses API](https://developers.openai.com/api/docs/guides/images-vision).
