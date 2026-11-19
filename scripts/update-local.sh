@@ -24,6 +24,8 @@ stamp="$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$target/ui-backups"
 cp -a "$target/dist" "$target/ui-backups/dist-$stamp"
 echo "Backed up the installed version to $target/ui-backups/dist-$stamp"
+# Keep only the ten most recent dist backups.
+ls -1d "$target/ui-backups"/dist-* 2>/dev/null | sort | head -n -10 | xargs -r rm -rf
 
 # Replace dist atomically-ish: copy to a temp folder, then swap.
 rm -rf "$target/dist.new"

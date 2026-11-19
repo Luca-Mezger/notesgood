@@ -3,8 +3,10 @@ import { openEditor, type EditorHandle } from './editor';
 import { showLibrary } from './library';
 import { toast } from './ui';
 import { applyTheme } from './theme';
+import { watchForUpdates } from './update';
 
 applyTheme();
+watchForUpdates();
 
 const root = document.getElementById('app')!;
 let editor: EditorHandle | null = null;

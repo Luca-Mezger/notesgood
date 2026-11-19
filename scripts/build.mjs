@@ -34,7 +34,11 @@ for (const f of await readdir(join(katex, 'dist/fonts'))) {
   if (f.endsWith('.woff2')) await cp(join(katex, 'dist/fonts', f), join(dist, 'katex/fonts', f));
 }
 
+// One id per build: written to version.js and baked into the bundle, so a running app can tell it is outdated.
+const build = Date.now().toString(36);
+
 const options = {
+  define: { __BUILD__: JSON.stringify(build) },
   entryPoints: [join(root, 'src/main.ts'), join(root, 'src/styles.css')],
   bundle: true,
   format: 'esm',
@@ -49,7 +53,7 @@ const options = {
 };
 
 // Stamp the service worker so each build gets a fresh cache
-await writeFile(join(dist, 'version.js'), `self.BUILD = ${JSON.stringify(Date.now().toString(36))};\n`);
+await writeFile(join(dist, 'version.js'), `self.BUILD = ${JSON.stringify(build)};\n`);
 
 if (serve) {
   const ctx = await esbuild.context(options);
