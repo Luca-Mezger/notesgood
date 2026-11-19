@@ -98,7 +98,8 @@ interface PV {
   visible: boolean; scale: number; bgScale: number; pdfS: number; bgW: number; job: RenderJob | null;
   nodes: Map<string, HTMLElement>; built: boolean; lines: TextLine[] | null;
 }
-interface Op { page: Page; removed: [number, El][]; added: [number, El][] }
+/** One undo step. `also` covers a second page, e.g. when a selection is moved to another page. */
+interface Op { page: Page; removed: [number, El][]; added: [number, El][]; also?: Op }
 interface ReadingPosition { page: string; index: number; x: number; y: number; zoom: number }
 
 type Action =
@@ -107,7 +108,9 @@ type Action =
   | { k: 'ruler'; id: number; pv: PV; part: 'a' | 'b' | 'body'; sx: number; sy: number; o: { x1: number; y1: number; x2: number; y2: number } }
   | { k: 'shape'; id: number; pv: PV; x1: number; y1: number; x2: number; y2: number }
   | { k: 'lasso'; id: number; pv: PV; pts: number[] }
-  | { k: 'xform'; id: number; pv: PV; mode: 'move' | 'scale' | 'rotate'; x0: number; y0: number; origs: El[]; ox: number; oy: number; d0: number; moved: boolean }
+  | { k: 'xform'; id: number; pv: PV; mode: 'move' | 'scale' | 'rotate'; x0: number; y0: number; origs: El[]; ox: number; oy: number; d0: number; moved: boolean;
+      /** Set once the selection has been dragged onto another page: where it came from. */
+      src?: { pv: PV; removed: [number, El][] } }
   | { k: 'pan'; id: number; x: number; y: number };
 
 export async function openEditor(root: HTMLElement, nbId: string, onExit: () => void): Promise<EditorHandle> {
@@ -575,10 +578,12 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
 
   function pushOp(op: Op) {
-    undo.push({ page: op.page, removed: structuredClone(op.removed), added: structuredClone(op.added) });
+    const copy = (o: Op): Op => ({ page: o.page, removed: structuredClone(o.removed), added: structuredClone(o.added), also: o.also && copy(o.also) });
+    undo.push(copy(op));
     if (undo.length > 300) undo.shift();
     redo.length = 0;
     markDirty(op.page);
+    if (op.also) markDirty(op.also.page);
     syncUndo();
   }
   function applyOp(op: Op, inverse: boolean) {
@@ -590,8 +595,9 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     const pv = pvOf.get(op.page);
     if (pv) {
       refreshPage(pv);
-      if (!pv.visible) scrollToPage(pvs.indexOf(pv));
+      if (!pv.visible && !op.also) scrollToPage(pvs.indexOf(pv));
     }
+    if (op.also) applyOp(op.also, inverse);
     syncUndo();
   }
   function doUndo() { editing?.finish(); const op = undo.pop(); if (op) { redo.push(op); applyOp(op, true); } }
@@ -634,6 +640,18 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     refreshPage(pv);
     pushOp({ page: pv.page, removed: [], added: copies.map((c, i) => [start + i, c]) });
     setSel({ pv, els: copies });
+  }
+  function copySel(quiet = false) {
+    if (!sel) return;
+    clipboard = sel.els.map((el) => cloneEl(el));
+    if (!quiet) toast(`Copied ${sel.els.length === 1 ? '1 item' : sel.els.length + ' items'}. Paste puts it on the page you are viewing.`);
+  }
+  function cutSel() {
+    if (!sel) return;
+    const n = sel.els.length;
+    copySel(true);
+    deleteSel();
+    toast(`Cut ${n === 1 ? '1 item' : n + ' items'}. Paste puts it on the page you are viewing.`);
   }
   function recolorSel(c: string) {
     if (!sel) return;
@@ -1138,6 +1156,19 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         if (e.shiftKey) rot = Math.round(rot / (Math.PI / 12)) * (Math.PI / 12);
       }
       a.moved = true;
+      if (a.mode === 'move') {
+        const tgt = pageAt(e.clientX, e.clientY);
+        if (tgt && tgt !== a.pv) {
+          moveSelToPage(a, tgt);
+          // Coordinates are now relative to the new page.
+          const r2 = tgt.el.getBoundingClientRect();
+          const nx = (e.clientX - r2.left) / zoom, ny = (e.clientY - r2.top) / zoom;
+          dx = nx - a.x0; dy = ny - a.y0;
+          if (ts.snapGrid) { const g = 10, bb = unionBBox(a.origs)!; dx = Math.round((bb[0] + dx) / g) * g - bb[0]; dy = Math.round((bb[1] + dy) / g) * g - bb[1]; }
+        }
+        lastXform = e;
+        autoScroll(e.clientY);
+      }
       for (let i = 0; i < els.length; i++) xformEl(a.origs[i], els[i], dx, dy, k, a.ox, a.oy, rot);
       schedule(() => {
         redrawInk(a.pv);
@@ -1149,6 +1180,54 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
 
   const ev_isPen = (e: PointerEvent) => e.pointerType !== 'touch';
+
+  // ---------- moving a selection to another page ----------
+  /** The visible page under a client position (including the gap just below it). */
+  function pageAt(cx: number, cy: number): PV | null {
+    for (const p of pvs) {
+      if (!p.visible) continue;
+      const r = p.el.getBoundingClientRect();
+      if (cy >= r.top && cy <= r.bottom && cx >= r.left - 40 && cx <= r.right + 40) return p;
+    }
+    return null;
+  }
+
+  /** Re-homes the selection being dragged onto page `to`, keeping it under the pointer. */
+  function moveSelToPage(a: Extract<Action, { k: 'xform' }>, to: PV) {
+    if (!sel) return;
+    const from = a.pv, els = sel.els;
+    const fr = from.el.getBoundingClientRect(), tr = to.el.getBoundingClientRect();
+    const ox = (fr.left - tr.left) / zoom, oy = (fr.top - tr.top) / zoom;
+    if (!a.src) a.src = { pv: from, removed: els.map((el, i) => [from.page.els.indexOf(el), a.origs[i]] as [number, El]) };
+    from.page.els = from.page.els.filter((el) => !els.includes(el));
+    for (const el of els) { from.nodes.get(el.id)?.remove(); from.nodes.delete(el.id); }
+    // Shift the originals too, so the drag continues smoothly in the new page's coordinates.
+    for (let i = 0; i < els.length; i++) { const o = a.origs[i]; xformEl(cloneEl(o), o, ox, oy); xformEl(cloneEl(els[i]), els[i], ox, oy); }
+    a.x0 += ox; a.y0 += oy;
+    to.page.els.push(...els);
+    if (to.built) for (const el of els) if (el.t === 't' || el.t === 'x') makeNode(to, el);
+    redrawInk(from);
+    redrawInk(to);
+    a.pv = to;
+    sel = { pv: to, els };
+    updateSelBox();
+  }
+
+  // While dragging a selection near the top or bottom edge, scroll so other pages come into reach.
+  let lastXform: PointerEvent | null = null, dragRaf = 0, scrollV = 0;
+  function autoScroll(cy: number) {
+    const vr = viewport.getBoundingClientRect(), edge = 56;
+    scrollV = cy < vr.top + edge ? -(vr.top + edge - cy) / 3 : cy > vr.bottom - edge ? (cy - (vr.bottom - edge)) / 3 : 0;
+    if (scrollV && !dragRaf) {
+      const step = () => {
+        if (!scrollV || act?.k !== 'xform' || !lastXform) { dragRaf = 0; return; }
+        viewport.scrollTop += Math.max(-18, Math.min(18, scrollV));
+        onMove(lastXform);
+        dragRaf = requestAnimationFrame(step);
+      };
+      dragRaf = requestAnimationFrame(step);
+    }
+  }
 
   // ---------- ruler ----------
   function distToRuler(x: number, y: number): number {
@@ -1420,12 +1499,26 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       redrawInk(a.pv);
       measure(a.pv);
       updateSelBox();
+      scrollV = 0; lastXform = null;
       const all = a.pv.page.els;
-      pushOp({
-        page: a.pv.page,
-        removed: a.origs.map((o, i) => [all.indexOf(sel!.els[i]), o]),
-        added: sel.els.map((el) => [all.indexOf(el), el]),
-      });
+      if (a.src && a.src.pv !== a.pv) {
+        refreshPage(a.src.pv);
+        refreshPage(a.pv);
+        pushOp({
+          page: a.src.pv.page, removed: a.src.removed, added: [],
+          also: { page: a.pv.page, removed: [], added: sel.els.map((el) => [all.indexOf(el), el]) },
+        });
+        toast(`Moved to page ${pvs.indexOf(a.pv) + 1}.`);
+      } else if (a.src) {
+        // Dragged away and back: same page, so a plain move.
+        pushOp({ page: a.pv.page, removed: a.src.removed, added: sel.els.map((el) => [all.indexOf(el), el]) });
+      } else {
+        pushOp({
+          page: a.pv.page,
+          removed: a.origs.map((o, i) => [all.indexOf(sel!.els[i]), o]),
+          added: sel.els.map((el) => [all.indexOf(el), el]),
+        });
+      }
       const bb = unionBBox(sel.els);
       if (bb) maybeGrow(a.pv, bb[3]);
     }
@@ -1495,6 +1588,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     if (a.k === 'erase') { a.pv.page.els = a.orig; redrawInk(a.pv); }
     else if (a.k === 'ruler' && ruler) { Object.assign(ruler, a.o); updateRuler(); }
     else if (a.k === 'xform' && sel) {
+      scrollV = 0; lastXform = null;
+      if (a.src && a.src.pv !== a.pv) moveSelToPage(a, a.src.pv);
       for (let i = 0; i < sel.els.length; i++) xformEl(a.origs[i], sel.els[i], 0, 0);
       redrawInk(a.pv);
       for (const el of sel.els) if (el.t === 't' || el.t === 'x') placeNode(a.pv, el);
@@ -1738,7 +1833,19 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     const pv = pvs[curIdx];
     if (!pv || !clipboard.length) return;
     editing?.finish();
-    const copies = clipboard.map((e) => { const c = cloneEl(e, true); xformEl(e, c, 14, 14); return c; });
+    // Same page as the original: offset a little so the copy is visible. Elsewhere: centre it in view.
+    const src = unionBBox(clipboard)!;
+    const vr = viewport.getBoundingClientRect(), pr = pv.el.getBoundingClientRect();
+    const vx0 = Math.max(0, (vr.left - pr.left) / zoom), vx1 = Math.min(pageW(pv.page, nb), (vr.right - pr.left) / zoom);
+    const vy0 = Math.max(0, (vr.top - pr.top) / zoom), vy1 = Math.min(pageH(pv.page), (vr.bottom - pr.top) / zoom);
+    const onPage = clipboard.some((e) => pv.page.els.some((o) => o.id === e.id));
+    const visible = src[0] >= vx0 && src[2] <= vx1 && src[1] >= vy0 && src[3] <= vy1;
+    let dx = 14, dy = 14;
+    if (!(onPage && visible)) {
+      dx = (vx0 + vx1) / 2 - (src[0] + src[2]) / 2;
+      dy = (vy0 + vy1) / 2 - (src[1] + src[3]) / 2;
+    }
+    const copies = clipboard.map((e) => { const c = cloneEl(e, true); xformEl(e, c, dx, dy); return c; });
     clipboard = copies.map((e) => cloneEl(e)); // the next paste lands a step further
     const start = pv.page.els.length;
     pv.page.els.push(...copies);
@@ -1860,15 +1967,18 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     if (t === 'select') {
       kids.push(
         sel?.els.length === 1 && (sel.els[0].t === 'x' || sel.els[0].t === 't') ? h('button', { class: 'btn small', type: 'button', 'aria-label': 'Edit selected object', onclick: editSelected }, icon('pen', 16), 'Edit') : null,
-        h('button', { class: 'btn small', type: 'button', disabled: !sel, onclick: duplicateSel }, icon('copy', 16), 'Duplicate'),
-        h('button', { class: 'btn small', type: 'button', disabled: !sel, onclick: deleteSel }, icon('trash', 16), 'Delete'),
+        h('button', { class: 'btn small', type: 'button', disabled: !sel, title: 'Cut (Ctrl+X)', onclick: cutSel }, icon('cut', 16), 'Cut'),
+        h('button', { class: 'btn small', type: 'button', disabled: !sel, title: 'Copy (Ctrl+C)', onclick: () => copySel() }, icon('copy', 16), 'Copy'),
+        h('button', { class: 'btn small', type: 'button', disabled: !clipboard.length, title: 'Paste on the page you are viewing (Ctrl+V)', onclick: pasteClipboard }, icon('paste', 16), 'Paste'),
+        h('button', { class: 'btn small', type: 'button', disabled: !sel, title: 'Duplicate (Ctrl+D)', onclick: duplicateSel }, icon('copy', 16), 'Duplicate'),
+        h('button', { class: 'btn small', type: 'button', disabled: !sel, title: 'Delete', onclick: deleteSel }, icon('trash', 16), 'Delete'),
         sel && sel.els.some((e) => e.t === 'i') ? h('button', { class: 'btn small', type: 'button', onclick: () => setLock(true) }, icon('lock', 16), 'Lock picture') : null,
         !sel && pvs[curIdx]?.page.els.some(locked) ? h('button', { class: 'btn small', type: 'button', onclick: () => unlockAll(pvs[curIdx]) }, icon('unlock', 16), 'Unlock pictures on this page') : null,
         sel && sel.els.some((e) => e.t === 's' || e.t === 'h') ? h('button', { class: 'btn small', type: 'button', title: 'Handwritten maths → rendered LaTeX', onclick: () => convertSel('latex') }, icon('tex', 16), 'To LaTeX') : null,
         sel && sel.els.some((e) => e.t === 's' || e.t === 'h') ? h('button', { class: 'btn small', type: 'button', title: 'Handwriting → typed text', onclick: () => convertSel('text') }, icon('text', 16), 'To text') : null,
         sel && sel.els.some(e => (e.t === 'x' || e.t === 't') && e.handwriting) ? h('button', { class: 'btn small', type: 'button', onclick: () => { if (sel) restoreHandwriting(sel.pv, sel.els); } }, icon('undo', 16), 'Restore handwriting') : null,
         (() => { const cb = h('input', { type: 'checkbox', checked: ts.snapGrid, onchange: () => { ts.snapGrid = cb.checked; saveSettings(); } }); return h('label', { class: 'check' }, cb, 'Snap to grid'); })(),
-        h('span', { class: 'hint' }, sel ? 'Drag to move · corner resizes · top handle rotates' : 'Circle items or tap one to select'));
+        h('span', { class: 'hint' }, sel ? 'Drag to move, also onto another page · corner resizes · top handle rotates' : 'Circle items or tap one to select'));
     }
     optbar.replaceChildren(...(ts.toolbar === 'left' ? [titleInput] : []), ...kids.filter((k): k is Node => !!k));
   }
@@ -1902,7 +2012,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     if (mod && key === 'z') { e.preventDefault(); e.shiftKey ? doRedo() : doUndo(); }
     else if (mod && key === 'y') { e.preventDefault(); doRedo(); }
     else if (mod && key === 'd' && sel) { e.preventDefault(); duplicateSel(); }
-    else if (mod && key === 'c' && sel) { clipboard = sel.els.map((el) => cloneEl(el)); toast('Copied. Ctrl+V pastes it on the page you are viewing.'); }
+    else if (mod && key === 'c' && sel) { e.preventDefault(); copySel(); }
+    else if (mod && key === 'x' && sel) { e.preventDefault(); cutSel(); }
     else if (mod && (key === '0')) { e.preventDefault(); setZoom(fitZoom(false), 0, 0, true); }
     else if (mod && (key === '=' || key === '+')) { e.preventDefault(); setZoom(zoom * 1.2, 0, 0, true); }
     else if (mod && key === '-') { e.preventDefault(); setZoom(zoom / 1.2, 0, 0, true); }
