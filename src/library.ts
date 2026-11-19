@@ -88,20 +88,32 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       { label: 'From Goodnotes', icon: 'import', action: goodnotesHelp },
     ]) }, icon('import', 18), h('span', { class: 'label' }, 'Import'));
 
+  // Studio layout: a sidebar for finding things (search, views, folder tree, sync) and a main area for the content.
+  const sideNav = h('nav', { class: 'side-nav', role: 'group', 'aria-label': 'Library view' });
+  const sideTree = h('div', { class: 'side-tree', 'aria-label': 'Folder tree' });
+  const closeSidebar = () => view.classList.remove('side-open');
+  const sidebar = h('aside', { class: 'sidebar' },
+    h('div', { class: 'side-brand' }, h('h1', null, 'Opplinotes'),
+      iconBtn('close', 'Close sidebar', closeSidebar, 'side-close')),
+    h('label', { class: 'search' }, icon('search', 17),
+      h('input', { type: 'search', placeholder: 'Search', 'aria-label': 'Search notes', oninput: (e: Event) => { query = (e.target as HTMLInputElement).value.toLowerCase(); renderGrid(); } })),
+    sideNav,
+    h('div', { class: 'side-label' }, h('span', null, 'Folders'), iconBtn('plus', 'New folder', addFolder, 'side-add')),
+    sideTree,
+    h('div', { class: 'side-foot' }, syncBtn, libMore));
   const view = h('div', { class: 'library' },
-    h('header', { class: 'lib-head' },
-      h('h1', null, 'Opplinotes'),
-      h('label', { class: 'search' }, icon('search', 18),
-        h('input', { type: 'search', placeholder: 'Search notes', 'aria-label': 'Search notes', oninput: (e: Event) => { query = (e.target as HTMLInputElement).value.toLowerCase(); renderGrid(); } })),
-      h('div', { class: 'lib-actions' },
-        syncBtn, importBtn,
-        h('button', { class: 'btn primary', type: 'button', 'aria-label': 'New notebook', onclick: newNotebook }, icon('plus', 18), h('span', { class: 'label' }, 'New notebook')),
-        libMore),
-      fileInput, dirInput),
-    navigation,
-    h('div', { class: 'library-tools' },
-      h('label', { class: 'sort-controls' }, h('span', null, 'Sort by'), sortSelect, sortDirection)),
-    folderSection, earlierImports, notebookHeading, grid);
+    sidebar,
+    h('div', { class: 'side-scrim', onclick: closeSidebar }),
+    h('main', { class: 'lib-main' },
+      h('header', { class: 'lib-head' },
+        iconBtn('menu', 'Show sidebar', () => view.classList.add('side-open'), 'menu-btn'),
+        navigation,
+        h('div', { class: 'lib-actions' },
+          h('label', { class: 'sort-controls' }, h('span', null, 'Sort'), sortSelect, sortDirection),
+          importBtn,
+          h('button', { class: 'btn primary', type: 'button', 'aria-label': 'New notebook', onclick: newNotebook }, icon('plus', 18), h('span', { class: 'label' }, 'New notebook'))),
+        fileInput, dirInput),
+      folderSection, earlierImports, notebookHeading, grid));
 
   // Drop a PDF anywhere on the library to import it
   view.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); view.classList.add('dropping'); } });
@@ -325,14 +337,44 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       const parts = filter.name.split(' / ');
       parts.forEach((part, i) => crumbs.append(h('span', { class: 'breadcrumb-separator', 'aria-hidden': 'true' }, '›'), crumb(part, parts.slice(0, i + 1).join(' / '), i === parts.length - 1)));
     } else if (filter.k !== 'folder') crumbs.append(h('span', { class: 'breadcrumb-separator', 'aria-hidden': 'true' }, '›'), h('span', { 'aria-current': 'page' }, filter.k === 'all' ? 'All notebooks' : 'Favourites'));
-    const viewSwitch = h('div', { class: 'view-switch', role: 'group', 'aria-label': 'Library view' },
-      ...([['folder', 'Documents'], ['all', 'All'], ['fav', 'Favourites']] as const).map(([value, label]) =>
-        h('button', { type: 'button', 'data-view': value, 'aria-pressed': String(filter.k === value),
-          onclick: () => navigate(value === 'folder' ? { k: 'folder', name: '' } : { k: value }) }, label)));
-    navigation.replaceChildren(crumbs, h('div', { class: 'library-title-row' },
-      h('h2', { class: 'library-title' }, filter.k === 'folder' ? folderName(filter.name) || 'Documents' : filter.k === 'all' ? 'All notebooks' : 'Favourites'),
-      h('div', { class: 'library-view-actions' }, viewSwitch,
-        h('button', { class: 'btn ghost', type: 'button', onclick: addFolder }, icon('plus', 18), 'New folder'))));
+    navigation.replaceChildren(crumbs,
+      h('h2', { class: 'library-title' }, filter.k === 'folder' ? folderName(filter.name) || 'Documents' : filter.k === 'all' ? 'All notebooks' : 'Favourites'));
+    renderSidebar();
+  }
+
+  function renderSidebar() {
+    const count = (n: number) => h('span', { class: 'side-count' }, String(n));
+    const views = [
+      ['folder', 'Documents', 'inbox', notebooks.filter((nb) => !nb.folder).length],
+      ['all', 'All notebooks', 'grid', notebooks.length],
+      ['fav', 'Favourites', 'star', notebooks.filter((nb) => nb.fav).length],
+    ] as const;
+    sideNav.replaceChildren(...views.map(([value, label, ic, n]) => {
+      const active = filter.k === value && (filter.k !== 'folder' || !filter.name);
+      const button = h('button', { type: 'button', class: 'side-item', 'data-view': value, 'aria-pressed': String(active),
+        onclick: () => { navigate(value === 'folder' ? { k: 'folder', name: '' } : { k: value }); closeSidebar(); } },
+        icon(ic, 18), h('span', { class: 'side-text' }, label), count(n));
+      if (value === 'folder') dropTarget(button, '');
+      return button;
+    }));
+    // Show top-level folders, plus the children of every folder on the path to the current one.
+    const current = currentFolder();
+    const open = (path: string) => path === '' || folderContains(path, current);
+    const visible = folders.filter((f) => open(folderParent(f))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+    sideTree.replaceChildren(...visible.map((path) => {
+      const depth = path.split(' / ').length - 1;
+      const hasChildren = folders.some((f) => folderParent(f) === path);
+      const row = h('button', { type: 'button', class: 'side-item side-folder', 'data-folder-path': path, 'aria-pressed': String(filter.k === 'folder' && filter.name === path),
+        style: { paddingLeft: 10 + depth * 16 + 'px' }, title: path,
+        onclick: () => { navigate({ k: 'folder', name: path }); closeSidebar(); } },
+        h('span', { class: 'side-caret' + (hasChildren ? '' : ' none') + (open(path) && hasChildren ? ' open' : '') }, icon('chevron', 14)),
+        icon('folder', 17), h('span', { class: 'side-text' }, folderName(path)),
+        count(notebooks.filter((nb) => folderContains(path, nb.folder)).length));
+      row.addEventListener('contextmenu', (e) => { e.preventDefault(); folderMenu(row, path); });
+      dropTarget(row, path);
+      return row;
+    }));
+    if (!visible.length) sideTree.append(h('p', { class: 'side-empty' }, 'No folders yet'));
   }
 
   async function addFolder() {
@@ -473,6 +515,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
   }
 
   function renderGrid() {
+    renderSidebar();
     const direction = descending ? -1 : 1;
     const compareName = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
     sortDirection.replaceChildren(icon(descending ? 'down' : 'up'));

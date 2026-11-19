@@ -174,7 +174,10 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       iconBtn('down', 'Move page down', () => movePage(1)),
       iconBtn('trash', 'Delete page', () => deletePage())),
     thumbsList);
-  const stage = h('div', { class: 'stage' }, viewport, live);
+  const stage = h('div', { class: 'stage tray-open' }, viewport, live);
+  /** The options tray opens when you pick a tool, folds away when you write, and reopens when you tap the active tool. */
+  const setTray = (open: boolean) => stage.classList.toggle('tray-open', open);
+  viewport.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse' || e.button === 0) setTray(false); }, true);
   const toolRow = h('div', { class: 'tools' });
   const optbar = h('div', { class: 'optbar' });
   const undoBtn = iconBtn('undo', 'Undo (Ctrl+Z)', () => doUndo());
@@ -216,24 +219,27 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   });
   const hasPdf = () => pages.some((p) => p.bg.k === 'pdf');
 
-  // Three zones: navigation + history · tools (centred) · view + document.
+  // Studio layout: a slim document bar on top; the writing tools float in a dock over the desk,
+  // with the current tool's options in a tray just above it.
   const tbStart = h('div', { class: 'tb-start' },
     iconBtn('back', 'Back to library', () => onExit()),
-    titleInput,
-    h('div', { class: 'tb-sep' }),
-    h('div', { class: 'tb-group' }, undoBtn, redoBtn));
+    titleInput);
   const toolbarEl = h('div', { class: 'toolbar' },
     tbStart,
-    h('div', { class: 'tb-center' }, toolRow, h('div', { class: 'tb-group' }, imgBtn, rulerBtn), imgInput),
     h('div', { class: 'tb-end' },
-      h('div', { class: 'tb-group' }, pageLabel, zoomBtn),
-      h('div', { class: 'tb-sep' }),
+      h('div', { class: 'tb-group page-pill' }, pageLabel, zoomBtn),
       h('div', { class: 'tb-group' }, fingerBtn, hasPdf() ? marginBtn : null, settingsBtn),
       h('div', { class: 'tb-sep' }),
       h('div', { class: 'tb-group' }, exportBtn, sideBtn, addPageBtn)));
+  const dock = h('div', { class: 'dock', role: 'toolbar', 'aria-label': 'Writing tools' },
+    h('div', { class: 'dock-group' }, undoBtn, redoBtn),
+    h('div', { class: 'dock-sep' }),
+    toolRow,
+    h('div', { class: 'dock-sep' }),
+    h('div', { class: 'dock-group' }, imgBtn, rulerBtn), imgInput);
+  stage.append(optbar, dock);
   const view = h('div', { class: 'editor' },
     toolbarEl,
-    optbar,
     h('div', { class: 'work' }, thumbs, stage));
   root.replaceChildren(view);
 
@@ -1787,8 +1793,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         refresh();
         return h('div', { class: 'form' }, provider, model, key, hint);
       })(),
-      h('label', null, 'Toolbar position'),
-      h('div', { class: 'seg tight' }, ...([['top', 'Top'], ['left', 'Left side']] as const).map(([v, label]) =>
+      h('label', null, 'Tool dock'),
+      h('div', { class: 'seg tight' }, ...([['top', 'Bottom'], ['left', 'Left side']] as const).map(([v, label]) =>
         h('button', { type: 'button', class: ts.toolbar === v ? 'active' : '', onclick: (e: Event) => { ts.toolbar = v; saveSettings(); syncToggles(); const seg = (e.currentTarget as HTMLElement).parentElement!; seg.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === e.currentTarget)); } }, label)))));
   }
 
@@ -1899,8 +1905,11 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
   function renderTools() {
     toolRow.replaceChildren(...TOOLS.map(([t, ic, label, key]) => {
-      const b = iconBtn(ic, `${label} (${key})`, () => setTool(t), 'tool' + (ts.tool === t ? ' active' : ''));
+      const b = iconBtn(ic, `${label} (${key})`, () => { if (ts.tool === t && !sel) setTray(!stage.classList.contains('tray-open')); else { setTool(t); setTray(true); } }, 'tool' + (ts.tool === t ? ' active' : ''));
       b.setAttribute('aria-pressed', String(ts.tool === t));
+      // The pen and highlighter show their current colour as a small dot in the dock.
+      const c = t === 'pen' ? ts.pen.c : t === 'hl' ? (ts.hl.mode === 'under' ? ts.ul.c : ts.hl.c) : '';
+      if (c) { b.classList.add('has-colour'); b.style.setProperty('--c', c); }
       return b;
     }));
     viewport.dataset.tool = ts.tool;
@@ -1920,19 +1929,20 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
   function renderOptbar() {
     renderCursor();
+    if (sel) setTray(true);
     const t = sel ? 'select' : ts.tool;
     const kids: (Node | null)[] = [];
     const colorTool = t === 'pen' || t === 'hl' || t === 'shape' || t === 'text' || t === 'tex' ? t : null;
     const under = t === 'hl' && ts.hl.mode === 'under';
     if (t === 'hl') {
       kids.push(h('div', { class: 'seg tight' }, ...([['mark', 'Mark'], ['under', 'Underline']] as const).map(([m, label]) =>
-        h('button', { type: 'button', class: (ts.hl.mode ?? 'mark') === m ? 'active' : '', onclick: () => { ts.hl.mode = m; saveSettings(); renderOptbar(); } }, label))));
+        h('button', { type: 'button', class: (ts.hl.mode ?? 'mark') === m ? 'active' : '', onclick: () => { ts.hl.mode = m; saveSettings(); renderOptbar(); renderTools(); } }, label))));
     }
     if (colorTool || t === 'select') {
       const target = under ? ts.ul : colorTool ? ts[colorTool] : null;
       const cur = target ? target.c : '';
       const pick = (c: string) => {
-        if (target) { target.c = c; saveSettings(); renderOptbar(); }
+        if (target) { target.c = c; saveSettings(); renderOptbar(); renderTools(); }
         else recolorSel(c);
       };
       const palette = t === 'hl' && !under ? HL : INK;
@@ -1988,7 +1998,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         (() => { const cb = h('input', { type: 'checkbox', checked: ts.snapGrid, onchange: () => { ts.snapGrid = cb.checked; saveSettings(); } }); return h('label', { class: 'check' }, cb, 'Snap to grid'); })(),
         h('span', { class: 'hint' }, sel ? 'Drag to move, also onto another page · corner resizes · top handle rotates' : 'Circle items or tap one to select'));
     }
-    optbar.replaceChildren(...(ts.toolbar === 'left' ? [titleInput] : []), ...kids.filter((k): k is Node => !!k));
+    optbar.replaceChildren(...kids.filter((k): k is Node => !!k));
   }
   function syncToggles() {
     fingerBtn.classList.toggle('active', ts.fingerDraw);
@@ -1998,8 +2008,6 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     sideBtn.classList.toggle('active', ts.sidebar);
     view.classList.toggle('with-thumbs', ts.sidebar);
     view.classList.toggle('tb-left', ts.toolbar === 'left');
-    // With the toolbar on the left, the title moves into the options bar.
-    if (ts.toolbar === 'left') { if (titleInput.parentElement !== optbar) { optbar.prepend(titleInput); } } else if (titleInput.parentElement !== tbStart) tbStart.insertBefore(titleInput, tbStart.children[1]);
     requestAnimationFrame(sizeLive);
   }
 

@@ -1,4 +1,4 @@
-# Opplinotes – Designkonzept „Stilles Papier“
+# Opplinotes – Designkonzept „Studio“
 
 Stand: November 2026. Grundlage für das komplette visuelle Redesign (Bibliothek, Editor, Dialoge, Dark Mode).
 
@@ -86,29 +86,28 @@ Gewichte: 400/500/600/700. Titel ab 18 px bekommen negatives Tracking (−0.01 b
 - **Dialog:** Radius 20, Titel 18/650, Aktionen rechts. Abgedunkelter Hintergrund mit leichtem Blur.
 - **Toast:** dunkle Pille unten mittig, gleitet herein.
 
-## 6. Ansichten
+## 6. Ansichten – Richtung „Studio“ (Version 2)
+
+Die erste Umsetzung behielt das alte Layout und verfeinerte nur Farben, Radien und Schatten. Im direkten Vergleich war kaum ein Unterschied zu sehen. Version 2 baut deshalb das Layout um: Tokens und Komponenten aus Abschnitt 4 und 5 bleiben, der Akzent wird ein Violett (Farbton 277°).
 
 ### Bibliothek
 
-- **Kopfzeile:** Marke · Suche (Pille, mittig) · Sync-Status als ruhiger Chip · **Import ▾** (ein Menü statt zwei Buttons: PDFs/ZIP/Backup, Ordner, Goodnotes) · **New notebook** (einzige Primäraktion) · Mehr-Menü.
-- **Titelbereich:** Brotkrumen klein darüber, großer Titel. Rechts ein Segment-Control *Documents · All · Favourites* (statt Dropdown) und „New folder“ als Ghost-Button.
-- **Sortierung:** eine leise Zeile ohne Trennlinie.
-- **Ordner:** flache Kacheln mit einem getönten Ordnersymbol. Die vier Tönungen haben gleiche Helligkeit und gleiches Chroma, damit keine Farbe heraussticht.
-- **Notizbücher:** Das Cover ist das Objekt (Papier mit Rücken, weicher Schatten, Hover-Lift); der Titel steht darunter.
-- **Leerer Zustand:** Symbol im Kreis, Titel, Satz und Primärbutton.
+- **Seitenleiste** (268 px, eigene Fläche): Marke, Suche, die Ansichten *Documents · All notebooks · Favourites* mit Zählern, darunter ein **Ordnerbaum**. Der Baum klappt den Pfad zum aktuellen Ordner auf, und jede Zeile ist ein Ablageziel für Drag & Drop. Unten sitzen Sync-Status und Backup-Menü.
+- **Hauptbereich:** Brotkrumen und großer Titel (32 px). Rechts stehen Sortierung, **Import ▾** und **New notebook** als einzige Primäraktion. Der Kopf bleibt beim Scrollen stehen und verschwimmt leicht mit dem Inhalt darunter.
+- **Ordner:** farbig getönte Kacheln mit Symbol oben und Name unten. Die Tönungen haben gleiche Helligkeit und gleiches Chroma; das Mehr-Menü erscheint beim Darüberfahren.
+- **Notizbücher:** große Cover mit Rücken, Glanzkante und einem Hover-Lift mit leichter Drehung.
+- **Schmale Fenster und Handy:** Die Seitenleiste wird eine Schublade (Menü-Knopf, abgedunkelter Hintergrund). Ordner stehen zweispaltig.
 
 ### Editor
 
-- **Leiste angedockt, aber leicht:** transluzente Fläche mit Blur und nur einer Haarlinie zum Schreibtisch.
-- **Kapsel-Gruppen:** ← · Titel · [Undo Redo] · **[Werkzeuge]** (zentrales Segment) · [Bild Lineal] · … · Seite 1/4 · Zoom · [Finger Rand Einstellungen] · [Export Seiten +].
-- **Optionsleiste:** gleiche Fläche wie die Leiste, die Gruppen trennen feine senkrechte Linien. Farben sind 22-px-Punkte mit Akzentring; Stärken sitzen in einem Mini-Segment. Hinweise rücken nach rechts, gedämpft.
-- **Schreibtisch:** warmes Hellgrau (Dunkel: fast Schwarz). Seiten bekommen einen realistischen, zweistufigen Schatten.
-- **Seitenleiste:** Fläche 2; die aktuelle Seite hat einen Akzentring und eine Nummernpille.
-- **LaTeX-Panel:** schwebendes Sheet mit Radius 20, Ebene 3.
-- **Linke Leiste:** Die Kapseln stapeln sich senkrecht. Bauformen und Tokens bleiben gleich.
+- **Schmale Dokumentleiste** oben: ← · Titel · Seiten-Pille „1 / 3 | 158 %“ · Finger, Rand, Einstellungen · Export, Seiten, +.
+- **Dock:** eine dunkle, schwebende Kapsel unten in der Mitte mit Undo/Redo · Werkzeugen · Bild/Lineal. Das aktive Werkzeug ist violett gefüllt; Stift und Textmarker zeigen ihre aktuelle Farbe als Punkt.
+- **Optionsleiste:** eine helle, schwebende Fläche direkt über dem Dock. Sie öffnet sich beim Werkzeugwechsel, klappt beim Schreiben weg und kommt mit einem Tipp auf das aktive Werkzeug zurück. Bei einer Auswahl bleibt sie offen. So verdeckt sie das Papier nicht dauerhaft; das war die Hauptkritik am schwebenden Goodnotes-Toolbar.
+- **Schreibtisch** füllt das ganze Fenster, die Seiten haben einen weichen, tiefen Schatten.
+- **Einstellung „Tool dock: Bottom / Left side“:** links steht das Dock senkrecht am Rand, die Optionsleiste oben.
+- Das Dokument selbst scrollt nie; Bibliothek und Editor scrollen in sich. Das hält die Leseposition beim Öffnen pixelgenau.
 
 ## 7. Nicht-Ziele
 
-- Keine schwebende Werkzeugleiste über dem Papier (siehe Nutzerfeedback zu Goodnotes).
 - Keine Web-Schrift-Downloads: Die App bleibt offline-fähig und klein.
-- Funktionen und Tastenkürzel bleiben unverändert. Es ändert sich nur die Darstellung, plus die Zusammenlegung der Import-Buttons und die Ansichtswahl als Segment-Control.
+- Funktionen und Tastenkürzel bleiben unverändert.

@@ -62,6 +62,10 @@ const ICONS: Record<string, string> = {
   cloud: 'M7 18a4 4 0 0 1-.6-7.95A5.5 5.5 0 0 1 17 8.5a4.5 4.5 0 0 1 .5 9.5z',
   image: 'M4 5h16v14H4zM4 16l4.5-4.5 3.5 3.5 3-3 5 5M9 9.5a1 1 0 1 0 .01 0',
   pdf: 'M6 3h8l4 4v14H6zM14 3v4h4M9 13h6M9 17h6',
+  menu: 'M4 7h16M4 12h16M4 17h10',
+  inbox: 'M4 13.5L6.6 5h10.8l2.6 8.5V19H4zM4 13.5h5l1.2 2h3.6l1.2-2h5',
+  grid: 'M4.5 4.5h6v6h-6zM13.5 4.5h6v6h-6zM4.5 13.5h6v6h-6zM13.5 13.5h6v6h-6z',
+  chevron: 'M9 6l6 6-6 6',
 };
 
 export function icon(name: string, size = 20): SVGSVGElement {
