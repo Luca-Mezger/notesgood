@@ -1,4 +1,4 @@
-// Keeps an open app on the newest installed build.
+// Keeps an open app on the newest installed build (checked on focus and navigation, no timer).
 // The build id baked into this bundle is compared with dist/version.js; when they differ the page
 // reloads, but only at a safe moment: library showing, no dialog, no import or toast in progress.
 // In the editor nothing happens until you go back to the library, so writing is never interrupted.
@@ -36,7 +36,7 @@ async function check() {
 
 export function watchForUpdates() {
   if (!CURRENT) return;
-  setInterval(check, 30_000);
+  // No timer: only check when you come back to the app or change view.
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void check(); });
   window.addEventListener('focus', () => void check());
   window.addEventListener('hashchange', () => setTimeout(check, 500));
