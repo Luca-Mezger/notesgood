@@ -46,7 +46,7 @@ try {
   };
   const until = async (expression) => { for (let i = 0; i < 100; i++) { if (await evaluate(expression)) return; await delay(50); } throw Error('Timed out: ' + expression); };
   const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
-  const chooseView = (value) => evaluate(`(()=>{const s=document.querySelector('[aria-label="Library view"]');s.value=${JSON.stringify(value)};s.dispatchEvent(new Event('change'))})()`);
+  const chooseView = (value) => evaluate(`document.querySelector('[aria-label="Library view"] [data-view=${JSON.stringify(value)}]').click()`);
   const drag = async (from, to) => {
     const payload = await evaluate(`(()=>{
       const source=document.querySelector(${JSON.stringify(from)}), target=document.querySelector(${JSON.stringify(to)});

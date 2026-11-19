@@ -216,13 +216,21 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   });
   const hasPdf = () => pages.some((p) => p.bg.k === 'pdf');
 
+  // Three zones: navigation + history · tools (centred) · view + document.
+  const tbStart = h('div', { class: 'tb-start' },
+    iconBtn('back', 'Back to library', () => onExit()),
+    titleInput,
+    h('div', { class: 'tb-sep' }),
+    h('div', { class: 'tb-group' }, undoBtn, redoBtn));
   const toolbarEl = h('div', { class: 'toolbar' },
-      iconBtn('back', 'Back to library', () => onExit()),
-      titleInput,
-      h('div', { class: 'tb-group' }, undoBtn, redoBtn),
-      toolRow,
-      imgBtn, rulerBtn, imgInput,
-      h('div', { class: 'tb-group right' }, pageLabel, zoomBtn, fingerBtn, hasPdf() ? marginBtn : null, settingsBtn, exportBtn, sideBtn, addPageBtn));
+    tbStart,
+    h('div', { class: 'tb-center' }, toolRow, h('div', { class: 'tb-group' }, imgBtn, rulerBtn), imgInput),
+    h('div', { class: 'tb-end' },
+      h('div', { class: 'tb-group' }, pageLabel, zoomBtn),
+      h('div', { class: 'tb-sep' }),
+      h('div', { class: 'tb-group' }, fingerBtn, hasPdf() ? marginBtn : null, settingsBtn),
+      h('div', { class: 'tb-sep' }),
+      h('div', { class: 'tb-group' }, exportBtn, sideBtn, addPageBtn)));
   const view = h('div', { class: 'editor' },
     toolbarEl,
     optbar,
@@ -1991,7 +1999,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     view.classList.toggle('with-thumbs', ts.sidebar);
     view.classList.toggle('tb-left', ts.toolbar === 'left');
     // With the toolbar on the left, the title moves into the options bar.
-    if (ts.toolbar === 'left') { if (titleInput.parentElement !== optbar) { optbar.prepend(titleInput); } } else if (titleInput.parentElement !== toolbarEl) toolbarEl.insertBefore(titleInput, toolbarEl.children[1]);
+    if (ts.toolbar === 'left') { if (titleInput.parentElement !== optbar) { optbar.prepend(titleInput); } } else if (titleInput.parentElement !== tbStart) tbStart.insertBefore(titleInput, tbStart.children[1]);
     requestAnimationFrame(sizeLive);
   }
 

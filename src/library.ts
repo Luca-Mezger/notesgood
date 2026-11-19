@@ -69,7 +69,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
     onchange: () => { const fs = [...(dirInput.files ?? [])]; const quick = quickPick; quickPick = false; dirInput.value = ''; if (fs.length) void importFiles(fs.map((file) => ({ file, path: file.webkitRelativePath || file.name })), quick); },
     oncancel: () => { quickPick = false; },
   });
-  const syncBtn: HTMLButtonElement = h('button', { class: 'btn small syncbtn', type: 'button', title: 'Sync', onclick: () => syncDialog() }, icon('cloud', 18), h('span', null, 'Sync'));
+  const syncBtn: HTMLButtonElement = h('button', { class: 'btn syncbtn', type: 'button', title: 'Sync', onclick: () => syncDialog() }, icon('cloud', 18), h('span', { class: 'label' }, 'Sync'));
   const offSync = onSync((s, msg) => {
     syncBtn.dataset.state = s;
     syncBtn.title = s === 'off' ? 'Sync is off. Click to set it up.' : msg;
@@ -77,11 +77,16 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
   });
   const libMore: HTMLButtonElement = iconBtn('more', 'Backup options', () => menu(libMore, [
     { label: 'Sync settings…', icon: 'cloud', action: syncDialog },
-    { label: 'Import from Goodnotes…', icon: 'import', action: goodnotesHelp },
-    { label: 'Import a folder of PDFs…', icon: 'folder', action: () => dirInput.click() },
     { label: 'Back up all notebooks', icon: 'export', action: () => backup(notebooks, 'Opplinotes backup ' + new Date().toISOString().slice(0, 10)) },
     { label: 'Restore from backup…', icon: 'import', action: () => fileInput.click() },
   ]));
+  // One import entry point instead of several equal-weight buttons.
+  const importBtn: HTMLButtonElement = h('button', { class: 'btn', type: 'button', 'aria-label': 'Import', title: 'Import PDFs, folders, backups or Goodnotes exports',
+    onclick: () => menu(importBtn, [
+      { label: 'PDFs, ZIP or backup…', icon: 'pdf', action: () => fileInput.click() },
+      { label: 'Folder of PDFs…', icon: 'folder', action: () => dirInput.click() },
+      { label: 'From Goodnotes', icon: 'import', action: goodnotesHelp },
+    ]) }, icon('import', 18), h('span', { class: 'label' }, 'Import'));
 
   const view = h('div', { class: 'library' },
     h('header', { class: 'lib-head' },
@@ -89,10 +94,9 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       h('label', { class: 'search' }, icon('search', 18),
         h('input', { type: 'search', placeholder: 'Search notes', 'aria-label': 'Search notes', oninput: (e: Event) => { query = (e.target as HTMLInputElement).value.toLowerCase(); renderGrid(); } })),
       h('div', { class: 'lib-actions' },
-        h('button', { class: 'btn', type: 'button', onclick: goodnotesHelp }, icon('import', 18), 'From Goodnotes'),
-        h('button', { class: 'btn', type: 'button', title: 'Import PDFs, a ZIP of PDFs, or a backup file', onclick: () => fileInput.click() }, icon('import', 18), 'Import'),
-        h('button', { class: 'btn primary', type: 'button', onclick: newNotebook }, icon('plus', 18), 'New notebook'),
-        syncBtn, libMore),
+        syncBtn, importBtn,
+        h('button', { class: 'btn primary', type: 'button', 'aria-label': 'New notebook', onclick: newNotebook }, icon('plus', 18), h('span', { class: 'label' }, 'New notebook')),
+        libMore),
       fileInput, dirInput),
     navigation,
     h('div', { class: 'library-tools' },
@@ -321,14 +325,14 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       const parts = filter.name.split(' / ');
       parts.forEach((part, i) => crumbs.append(h('span', { class: 'breadcrumb-separator', 'aria-hidden': 'true' }, '›'), crumb(part, parts.slice(0, i + 1).join(' / '), i === parts.length - 1)));
     } else if (filter.k !== 'folder') crumbs.append(h('span', { class: 'breadcrumb-separator', 'aria-hidden': 'true' }, '›'), h('span', { 'aria-current': 'page' }, filter.k === 'all' ? 'All notebooks' : 'Favourites'));
-    const viewSelect = h('select', { class: 'field library-view', 'aria-label': 'Library view', onchange: (e: Event) => {
-      const k = (e.target as HTMLSelectElement).value;
-      navigate(k === 'all' || k === 'fav' ? { k } : { k: 'folder', name: '' });
-    } }, ...[['folder', 'Documents'], ['all', 'All notebooks'], ['fav', 'Favourites']].map(([value, label]) => h('option', { value, selected: filter.k === value }, label)));
+    const viewSwitch = h('div', { class: 'view-switch', role: 'group', 'aria-label': 'Library view' },
+      ...([['folder', 'Documents'], ['all', 'All'], ['fav', 'Favourites']] as const).map(([value, label]) =>
+        h('button', { type: 'button', 'data-view': value, 'aria-pressed': String(filter.k === value),
+          onclick: () => navigate(value === 'folder' ? { k: 'folder', name: '' } : { k: value }) }, label)));
     navigation.replaceChildren(crumbs, h('div', { class: 'library-title-row' },
       h('h2', { class: 'library-title' }, filter.k === 'folder' ? folderName(filter.name) || 'Documents' : filter.k === 'all' ? 'All notebooks' : 'Favourites'),
-      h('div', { class: 'library-view-actions' }, viewSelect,
-        h('button', { class: 'btn', type: 'button', onclick: addFolder }, icon('plus', 18), 'New folder'))));
+      h('div', { class: 'library-view-actions' }, viewSwitch,
+        h('button', { class: 'btn ghost', type: 'button', onclick: addFolder }, icon('plus', 18), 'New folder'))));
   }
 
   async function addFolder() {
@@ -498,8 +502,10 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
 
     if (!list.length) {
       grid.replaceChildren(...(visibleFolders.length && !query ? [] : [h('div', { class: 'empty' },
+        h('div', { class: 'empty-art' }, icon(query ? 'search' : 'pen', 28)),
         h('h2', null, query ? 'No notes match your search' : notebooks.length ? 'Nothing here yet' : 'Start your first notebook'),
-        h('p', null, query ? 'Try a different title.' : 'Create a notebook or drop a PDF here to import it.'))]));
+        h('p', null, query ? 'Try a different title.' : 'Create a notebook or drop a PDF here to import it.'),
+        query ? null : h('button', { class: 'btn primary', type: 'button', onclick: newNotebook }, icon('plus', 18), 'New notebook'))]));
       return;
     }
     grid.replaceChildren(...list.map(card));

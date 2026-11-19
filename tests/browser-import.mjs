@@ -53,7 +53,7 @@ try {
   const evaluate = async (expression) => { const result = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails)); return result.result.value; };
   const until = async (expression) => { for (let i = 0; i < 150; i++) { if (await evaluate(expression)) return; await delay(100); } throw Error('Timed out: ' + expression); };
   const importAction = async (label, condition) => {
-    await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='From Goodnotes').click()");
+    await evaluate("document.querySelector('[aria-label=\"Import\"]').click();[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='From Goodnotes').click()");
     await until("!!document.querySelector('.modal .import-status')");
     await evaluate(`[...document.querySelectorAll('.modal button')].find(b=>b.textContent===${JSON.stringify(label)}).click()`);
     if (condition) await until(condition);
@@ -65,7 +65,7 @@ try {
   await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 850, deviceScaleFactor: 1, mobile: false });
   await send('Page.navigate', { url: base + '/' });
   await until("!!document.querySelector('[data-folder=\"Goodnotes\"]')");
-  await evaluate("(()=>{const s=document.querySelector('[aria-label=\"Library view\"]');s.value='all';s.dispatchEvent(new Event('change'))})()");
+  await evaluate("document.querySelector('[aria-label=\"Library view\"] [data-view=\"all\"]').click()");
   await until("document.querySelectorAll('.card').length===2");
   console.log('PASS: actual browser automatically imports two unique PDFs and skips a renamed duplicate.');
   assert.equal(await evaluate("document.querySelector('.modal-back')===null"), true, 'Auto import must not ask for margins');
@@ -81,7 +81,7 @@ try {
   assert.equal(await evaluate("document.querySelectorAll('.card').length"), 2);
   await importAction('Resume auto-import', "document.querySelectorAll('.card').length===3");
   console.log('PASS: pause blocks new imports; resume picks up the next export.');
-  await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='From Goodnotes').click()");
+  await evaluate("document.querySelector('[aria-label=\"Import\"]').click();[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='From Goodnotes').click()");
   await until("!!document.querySelector('.modal-back')");
   assert((await evaluate("document.querySelector('.modal').textContent")).includes('one at a time'));
   await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='Choose PDFs or ZIP').click()");
