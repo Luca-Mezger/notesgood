@@ -24,7 +24,7 @@ export type Bg =
 /** For PDF pages, w/h is the size of the PDF page itself; the side margin is added on top (see pageW). */
 export interface Page { id: string; nb: string; w: number; h: number; bg: Bg; els: El[]; /** last change (ms), used by sync */ u?: number; /** extra height added below the original page (points) */ ext?: number }
 
-export interface SavedOp { page: string; removed: [number, El][]; added: [number, El][] }
+export interface SavedOp { page: string; removed: [number, El][]; added: [number, El][]; also?: SavedOp }
 /** Local undo checkpoints are valid only while their pages have the same revisions. */
 export interface EditorHistory { v: 1; undo: SavedOp[]; redo: SavedOp[]; revisions: [string, number][] }
 

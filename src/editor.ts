@@ -12,6 +12,7 @@ import { confirmDlg, download, h, icon, iconBtn, menu, modal, popover, toast } f
 import { sync, syncEnabled } from './sync';
 import { inkToPng, recogReady, recognize as recogInk, RECOG_MODELS, recogConfig, saveRecogConfig, type RecogProvider } from './recognize';
 import { applyTheme, themeSetting, setThemeSetting } from './theme';
+import { InkSelectionPreview } from './selection-preview';
 
 export interface EditorHandle { close(): Promise<void> }
 
@@ -110,7 +111,7 @@ type Action =
   | { k: 'lasso'; id: number; pv: PV; pts: number[] }
   | { k: 'xform'; id: number; pv: PV; mode: 'move' | 'scale' | 'rotate'; x0: number; y0: number; origs: El[]; ox: number; oy: number; d0: number; moved: boolean;
       /** Set once the selection has been dragged onto another page: where it came from. */
-      src?: { pv: PV; removed: [number, El][] } }
+      src?: { pv: PV; removed: [number, El][] }; preview?: InkSelectionPreview }
   | { k: 'pan'; id: number; x: number; y: number };
 
 export async function openEditor(root: HTMLElement, nbId: string, onExit: () => void): Promise<EditorHandle> {
@@ -137,10 +138,10 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const checkpoint = await db.meta<EditorHistory>('history:' + nbId);
   if (checkpoint?.v === 1) {
     const revisions = new Map(checkpoint.revisions);
-    const valid = (op: SavedOp) => nb.pages.includes(op.page) && byId.has(op.page) && revisions.get(op.page) === (byId.get(op.page)!.u ?? 0);
+    const valid = (op: SavedOp): boolean => nb.pages.includes(op.page) && byId.has(op.page) && revisions.get(op.page) === (byId.get(op.page)!.u ?? 0) && (!op.also || valid(op.also));
     // A sync from another device may have replaced pages since this local checkpoint.
     if ([...checkpoint.undo, ...checkpoint.redo].every(valid)) {
-      const restore = (op: SavedOp): Op => ({ ...op, page: byId.get(op.page)! });
+      const restore = (op: SavedOp): Op => ({ ...op, page: byId.get(op.page)!, also: op.also && restore(op.also) });
       undo.push(...checkpoint.undo.map(restore));
       redo.push(...checkpoint.redo.map(restore));
     }
@@ -326,7 +327,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.clearRect(0, 0, pv.ink.width, pv.ink.height);
     c.setTransform(pv.scale, 0, 0, pv.scale, 0, 0);
-    drawInk(c, pv.page.els);
+    const preview = act?.k === 'xform' && act.pv === pv ? act.preview : null;
+    drawInk(c, preview ? pv.page.els.filter(e => !preview.ids.has(e.id)) : pv.page.els);
     const pc = pv.pics.getContext('2d')!;
     pc.setTransform(1, 0, 0, 1, 0, 0);
     pc.clearRect(0, 0, pv.pics.width, pv.pics.height);
@@ -573,7 +575,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     dirty.clear();
     if (list.length) nb.updated = Date.now();
     try {
-      const saveOp = (op: Op): SavedOp => ({ ...op, page: op.page.id });
+      const saveOp = (op: Op): SavedOp => ({ ...op, page: op.page.id, also: op.also && saveOp(op.also) });
       await db.putEditorState(nb, list, {
         v: 1, undo: undo.map(saveOp), redo: redo.map(saveOp),
         revisions: pages.map(p => [p.id, p.u ?? 0]),
@@ -620,6 +622,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
 
   // ---------- selection ----------
   function setSel(s: typeof sel) {
+    if (act?.k === 'xform') cancelAction();
     const hadSelection = !!sel;
     sel = s && s.els.length ? s : null;
     updateSelBox();
@@ -627,7 +630,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
   function updateSelBox() {
     updateRuler();
-    const bb = sel && unionBBox(sel.els);
+    const bb = act?.k === 'xform' && act.preview ? act.preview.bounds : sel && unionBBox(sel.els);
     if (!sel || !bb) { selBox.remove(); return; }
     if (selBox.parentElement !== sel.pv.el) sel.pv.el.append(selBox);
     const pad = 5;
@@ -1013,11 +1016,16 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         setSel(null);
         act = { k: 'lasso', id, pv, pts: [x, y] };
       }
+      if (act?.k === 'xform') startInkPreview(act);
     }
   }
 
   let frame = 0;
-  const schedule = (fn: () => void) => { cancelAnimationFrame(frame); frame = requestAnimationFrame(fn); };
+  let frameWork: (() => void) | null = null;
+  function runFrame() { frame = 0; const work = frameWork; frameWork = null; work?.(); }
+  function cancelFrame() { cancelAnimationFrame(frame); frame = 0; frameWork = null; }
+  function flushFrame() { cancelAnimationFrame(frame); runFrame(); }
+  const schedule = (fn: () => void) => { frameWork = fn; if (!frame) frame = requestAnimationFrame(runFrame); };
 
   function onMove(e: PointerEvent) {
     updatePointerType(e);
@@ -1163,7 +1171,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       let dx = 0, dy = 0, k = 1, rot = 0;
       if (a.mode === 'move') {
         dx = x - a.x0; dy = y - a.y0;
-        if (ts.snapGrid) { const g = 10, bb = unionBBox(a.origs)!; dx = Math.round((bb[0] + dx) / g) * g - bb[0]; dy = Math.round((bb[1] + dy) / g) * g - bb[1]; }
+        if (ts.snapGrid) { const g = 10, bb = a.preview?.originalBounds ?? unionBBox(a.origs)!; dx = Math.round((bb[0] + dx) / g) * g - bb[0]; dy = Math.round((bb[1] + dy) / g) * g - bb[1]; }
       } else if (a.mode === 'scale') k = Math.max(0.1, Math.hypot(x - a.ox, y - a.oy) / a.d0);
       else {
         rot = Math.atan2(y - a.oy, x - a.ox) - Math.atan2(a.y0 - a.oy, a.x0 - a.ox);
@@ -1178,13 +1186,16 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
           const r2 = tgt.el.getBoundingClientRect();
           const nx = (e.clientX - r2.left) / zoom, ny = (e.clientY - r2.top) / zoom;
           dx = nx - a.x0; dy = ny - a.y0;
-          if (ts.snapGrid) { const g = 10, bb = unionBBox(a.origs)!; dx = Math.round((bb[0] + dx) / g) * g - bb[0]; dy = Math.round((bb[1] + dy) / g) * g - bb[1]; }
+          if (ts.snapGrid) { const g = 10, bb = a.preview?.originalBounds ?? unionBBox(a.origs)!; dx = Math.round((bb[0] + dx) / g) * g - bb[0]; dy = Math.round((bb[1] + dy) / g) * g - bb[1]; }
         }
         lastXform = e;
         autoScroll(e.clientY);
       }
-      for (let i = 0; i < els.length; i++) xformEl(a.origs[i], els[i], dx, dy, k, a.ox, a.oy, rot);
-      schedule(() => {
+      if (a.preview) {
+        a.preview.update(dx, dy, k, a.ox, a.oy, rot);
+        updateSelBox();
+      } else schedule(() => {
+        for (let i = 0; i < els.length; i++) xformEl(a.origs[i], els[i], dx, dy, k, a.ox, a.oy, rot);
         redrawInk(a.pv);
         for (const el of els) if (el.t === 't' || el.t === 'x') placeNode(a.pv, el);
         if (a.mode === 'scale') measure(a.pv);
@@ -1194,6 +1205,22 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
 
   const ev_isPen = (e: PointerEvent) => e.pointerType !== 'touch';
+
+  function startInkPreview(a: Extract<Action, { k: 'xform' }>) {
+    if (!sel || !a.origs.every(e => e.t === 's' || e.t === 'h')) return;
+    a.preview = new InkSelectionPreview(a.pv.el, a.origs, zoom, a.pv.scale || zoom * dpr, MAX_PX);
+    redrawInk(a.pv);
+    // Keep the handles above the temporary canvas.
+    a.pv.el.append(selBox);
+  }
+
+  function finishInkPreview(a: Extract<Action, { k: 'xform' }>, commit: boolean) {
+    const p = a.preview;
+    if (!p) return;
+    if (commit && sel) for (let i = 0; i < sel.els.length; i++) xformEl(a.origs[i], sel.els[i], p.dx, p.dy, p.k, a.ox, a.oy, p.rot);
+    p.remove();
+    a.preview = undefined;
+  }
 
   // ---------- moving a selection to another page ----------
   /** The visible page under a client position (including the gap just below it). */
@@ -1209,10 +1236,12 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   /** Re-homes the selection being dragged onto page `to`, keeping it under the pointer. */
   function moveSelToPage(a: Extract<Action, { k: 'xform' }>, to: PV) {
     if (!sel) return;
+    const hadPreview = !!a.preview;
+    finishInkPreview(a, true);
     const from = a.pv, els = sel.els;
     const fr = from.el.getBoundingClientRect(), tr = to.el.getBoundingClientRect();
     const ox = (fr.left - tr.left) / zoom, oy = (fr.top - tr.top) / zoom;
-    if (!a.src) a.src = { pv: from, removed: els.map((el, i) => [from.page.els.indexOf(el), a.origs[i]] as [number, El]) };
+    if (!a.src) a.src = { pv: from, removed: els.map((el, i) => [from.page.els.indexOf(el), cloneEl(a.origs[i])] as [number, El]) };
     from.page.els = from.page.els.filter((el) => !els.includes(el));
     for (const el of els) { from.nodes.get(el.id)?.remove(); from.nodes.delete(el.id); }
     // Shift the originals too, so the drag continues smoothly in the new page's coordinates.
@@ -1220,10 +1249,11 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     a.x0 += ox; a.y0 += oy;
     to.page.els.push(...els);
     if (to.built) for (const el of els) if (el.t === 't' || el.t === 'x') makeNode(to, el);
-    redrawInk(from);
-    redrawInk(to);
     a.pv = to;
     sel = { pv: to, els };
+    if (hadPreview) startInkPreview(a);
+    redrawInk(from);
+    if (!a.preview) redrawInk(to);
     updateSelBox();
   }
 
@@ -1454,8 +1484,9 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     }
     const a = act;
     if (!a || a.id !== e.pointerId) return;
+    if (a.k === 'xform' && e.type !== 'pointercancel') flushFrame();
+    else cancelFrame();
     act = null;
-    cancelAnimationFrame(frame);
     if (viewport.hasPointerCapture(e.pointerId)) viewport.releasePointerCapture(e.pointerId);
     if (e.type === 'pointercancel') { abort(a); return; }
 
@@ -1509,7 +1540,9 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       if (len * zoom < 8 && !picked.length) setTool('pen');
       else setSel({ pv: a.pv, els: picked });
     } else if (a.k === 'xform') {
-      if (!a.moved || !sel) return;
+      const hadPreview = !!a.preview;
+      finishInkPreview(a, a.moved);
+      if (!a.moved || !sel) { if (hadPreview) redrawInk(a.pv); return; }
       redrawInk(a.pv);
       measure(a.pv);
       updateSelBox();
@@ -1602,6 +1635,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     if (a.k === 'erase') { a.pv.page.els = a.orig; redrawInk(a.pv); }
     else if (a.k === 'ruler' && ruler) { Object.assign(ruler, a.o); updateRuler(); }
     else if (a.k === 'xform' && sel) {
+      finishInkPreview(a, false);
       scrollV = 0; lastXform = null;
       if (a.src && a.src.pv !== a.pv) moveSelToPage(a, a.src.pv);
       for (let i = 0; i < sel.els.length; i++) xformEl(a.origs[i], sel.els[i], 0, 0);
@@ -1614,7 +1648,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     const a = act;
     if (!a) return;
     act = null;
-    cancelAnimationFrame(frame);
+    cancelFrame();
     if (viewport.hasPointerCapture(a.id)) viewport.releasePointerCapture(a.id);
     abort(a);
   }
