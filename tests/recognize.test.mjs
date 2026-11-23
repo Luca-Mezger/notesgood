@@ -83,6 +83,34 @@ test('OpenAI text keeps line breaks and inline math; all assistant text parts ar
   assert.equal(await recognize('AA==', 'text'), 'First line with $x^2$\nSecond line');
 });
 
+test('optional instructions reach either provider and graphs request standalone SVG', async () => {
+  for (const provider of ['openai', 'claude']) {
+    saveRecogConfig({ provider, key: 'test-key', model: provider === 'openai' ? 'gpt-5.4' : 'claude-sonnet-5-5' });
+    const drawing = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><path d="M0 300L400 0"/></svg>';
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      const prompt = (body.input ?? body.messages)[0].content[1].text;
+      assert.match(prompt, /Plot y = x² from −3 to 3/);
+      assert.match(prompt, /standalone SVG/);
+      assert.match(prompt, /TikZ and pgfplots are not supported/);
+      if (provider === 'claude') assert.equal(body.max_tokens, 4096);
+      return Response.json(provider === 'openai' ? reply('```svg\n' + drawing + '\n```') : { content: [{ type: 'text', text: drawing }] });
+    };
+    assert.equal(await recognize('AA==', 'latex', '  Plot y = x² from −3 to 3  '), drawing);
+    assert(!localStorage.getItem('margin.recog').includes('Plot y'), 'Prompts must not become shared settings');
+  }
+});
+
+test('custom transcription instructions and prompt limits preserve the output contract', async () => {
+  useOpenAI();
+  globalThis.fetch = async (_url, init) => {
+    assert.match(JSON.parse(init.body).input[0].content[1].text, /Translate into German/);
+    return Response.json(reply('Eine Zeile'));
+  };
+  assert.equal(await recognize('AA==', 'text', 'Translate into German'), 'Eine Zeile');
+  await assert.rejects(recognize('AA==', 'latex', 'a'.repeat(4001)), /4000/);
+});
+
 test('Claude still uses its existing image API and cleans LaTeX delimiters', async () => {
   saveRecogConfig({ provider: 'claude', key: 'test-claude-key', model: 'claude-haiku-5-5' });
   globalThis.fetch = async (url, init) => {

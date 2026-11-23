@@ -160,6 +160,10 @@ from the hosted URL with Bubblewrap (Trusted Web Activity); see the deploy promp
   you do not need to trace around every line. The selection stays active for repeated moves.
 - **Handwriting → LaTeX / text**: lasso some handwriting and press *To LaTeX* or *To text*. This sends an
   image of the selected strokes to Claude or OpenAI, selected under Settings → Handwriting recognition.
+  *To LaTeX* accepts an optional prompt: for example, “Plot this function from −3 to 3 and label the axes.”
+  Leave it empty for transcription. Formulas use LaTeX; graphs and diagrams use editable SVG rather
+  than TikZ/pgfplots. Use **Edit** to change or save the SVG source. Results support undo/redo, retain
+  the original handwriting, reopen without another AI request, and appear in PDF exports.
   OpenAI supports GPT-5.4 mini and GPT-5.4 through the [Responses API](https://developers.openai.com/api/docs/guides/images-vision).
   Enter your own API key there; each provider's key and model stay separate in this browser and are
   never synced. Without a key the rest of the app works as before.

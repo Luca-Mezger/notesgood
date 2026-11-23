@@ -272,9 +272,11 @@ try {
   const point = await evaluate(`(()=>{const r=document.querySelector('.page').getBoundingClientRect(),z=Number(document.querySelector('.pages').style.getPropertyValue('--z'));return {x:r.x+20*z,y:r.y+30*z}})()`);
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'left', clickCount: 1 });
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'left', clickCount: 1 });
-  await until(`!!document.querySelector('[title="Handwritten maths → rendered LaTeX"]')`);
+  await until(`!![...document.querySelectorAll('button')].find(b=>b.textContent==='To LaTeX')`);
   const storedInk = await evaluate("readRecord('pages','page-0').then(p=>p.els)");
-  await click('[title="Handwritten maths → rendered LaTeX"]');
+  await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='To LaTeX').click()");
+  await until("!!document.querySelector('[aria-label=\"Conversion prompt\"]')");
+  await click('.modal-actions .primary');
   await until("!!document.querySelector('.page .katex')");
   const request = await evaluate('window.recognitionRequests[0]');
   assert.equal(request.headers.Authorization, 'Bearer test-openai-key');
@@ -863,6 +865,128 @@ try {
   const lassoToolbar=await send('Page.captureScreenshot',{format:'png',clip:{x:0,y:0,width:1440,height:130,scale:1.5}});
   await writeFile('/tmp/opplinotes-lasso-toolbar.png',Buffer.from(lassoToolbar.data,'base64'));
   console.log('PASS: a partly enclosed stroke is fully selected and movable, locked pictures and untouched ink are excluded, and moving remains undoable.');
+
+  // Prompted graphs use the same durable, editable and undoable object path as formulas.
+  await click('[aria-label="Back to library"]');
+  await until("!!document.querySelector('.library')");
+  await evaluate(`(async()=>{
+    const d=await new Promise(r=>{const q=indexedDB.open('margin');q.onsuccess=()=>r(q.result)});
+    const t=d.transaction(['notebooks','pages'],'readwrite');
+    t.objectStore('notebooks').put({id:'graphs',title:'Graph generation demo',folder:'',fav:false,created:1,updated:1,pages:['graph-page'],margin:0,marginTpl:'blank',tpl:'blank',paper:'#fff'});
+    t.objectStore('pages').put({id:'graph-page',nb:'graphs',w:595,h:842,bg:{k:'paper',tpl:'blank',color:'#fff'},els:[{t:'h',id:'graph-ink',k:'line',c:'#123456',s:2,x1:100,y1:100,x2:180,y2:140}]});
+    await new Promise(r=>t.oncomplete=r);d.close();location.hash='#/n/graphs';
+  })()`);
+  await until("document.querySelector('[aria-label=\"Notebook title\"]')?.value==='Graph generation demo'");
+  const originalGraphInk=await evaluate("readRecord('pages','graph-page').then(p=>p.els)");
+  const graph='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><title>Example graph</title><rect width="400" height="300" fill="#fff"/><path d="M40 20V260H380M40 220Q200 -100 360 220" fill="none" stroke="#2563eb" stroke-width="3"/><circle cx="200" cy="150" r="30" fill="#ff0000"/><text x="200" y="285" text-anchor="middle" font-size="16">x</text></svg>';
+  await evaluate(`(()=>{
+    window.graphRequests=[];window.graphReply=${JSON.stringify(graph)};
+    const original=window.fetch;window.fetch=async(url,init)=>{
+      if(String(url).startsWith('https://api.openai.com/')){
+        graphRequests.push(JSON.parse(init.body));
+        return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:graphReply}]}]});
+      }
+      return original(url,init);
+    };
+  })()`);
+  await toolKey('l');
+  await mouseGesture(await pagePoint(140,120));
+  const openConversion=async()=>{
+    await evaluate("[...document.querySelectorAll('button')].find(b=>b.textContent==='To LaTeX').click()");
+    await until("!!document.querySelector('[aria-label=\"Conversion prompt\"]')");
+  };
+  await openConversion();
+  await evaluate("[...document.querySelectorAll('.modal-actions button')].find(b=>b.textContent==='Cancel').click()");
+  assert.equal(await evaluate('graphRequests.length'),0,'Cancel does not send handwriting');
+  await evaluate(`window.graphReply=${JSON.stringify(graph.replace('</svg>','<script>alert(1)</script></svg>'))}`);
+  await openConversion();
+  await click('.modal-actions .primary');
+  await until("document.querySelector('.toast')?.textContent.includes('Recognition failed')");
+  assert.equal(await evaluate("!!document.querySelector('.math-graphic')"),false);
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  assert.deepEqual(await evaluate("readRecord('pages','graph-page').then(p=>p.els)"),originalGraphInk,'Invalid AI output never replaces the original ink');
+  await evaluate(`window.graphReply=${JSON.stringify(graph)};window.graphRequests=[]`);
+  await openConversion();
+  await evaluate(`document.querySelector('[aria-label="Conversion prompt"]').value='Plot this function and label both axes'`);
+  await click('.modal-actions .primary');
+  await until("document.querySelector('.math-graphic')?.complete");
+  assert.match(await evaluate('graphRequests[0].input[0].content[1].text'),/Plot this function and label both axes/);
+  assert.match(await evaluate('graphRequests[0].input[0].content[0].image_url'),/^data:image\/png;base64,/);
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  const generated=await evaluate("readRecord('pages','graph-page').then(p=>p.els[0])");
+  assert(generated.src.startsWith('<svg'));
+  assert.deepEqual(generated.handwriting.ink,originalGraphInk);
+  assert.equal(await evaluate("document.querySelector('.math-graphic').naturalWidth"),400);
+  assert.equal(generated.w,384);
+  assert.equal(generated.h,288);
+  await shortcut('z',{ctrlKey:true});
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  assert.deepEqual(await evaluate("readRecord('pages','graph-page').then(p=>p.els)"),originalGraphInk);
+  await shortcut('y',{ctrlKey:true});
+  await until("document.querySelector('.math-graphic')?.complete");
+  const graphCentre=await pagePoint(generated.x+192,generated.y+144);
+  await mouseGesture(graphCentre);
+  await click('[aria-label="Edit selected object"]');
+  await until("!!document.querySelector('[aria-label=\"SVG source\"]')");
+  assert.equal(await evaluate("document.querySelector('.tex-head strong').textContent"),'Edit graphic');
+  assert.equal(await evaluate("!!document.querySelector('.snips')"),false);
+  // Active markup and external resources must never become part of a saved graphic.
+  for(const bad of [
+    graph.replace('</svg>','<script>alert(1)</script></svg>'),
+    graph.replace('<svg ','<svg onload="alert(1)" '),
+    graph.replace('</svg>','<image href="https://example.invalid/private"/></svg>'),
+    graph.replace('fill="#ff0000"','fill="url(https://example.invalid/private)"'),
+    '<svg viewBox="0 0 0 300"></svg>'
+  ]){
+    await evaluate(`(()=>{const t=document.querySelector('[aria-label="SVG source"]');t.value=${JSON.stringify(bad)};t.dispatchEvent(new Event('input'))})()`);
+    await click('.tex-panel .primary');
+    assert.equal(await evaluate("!!document.querySelector('.tex-panel')"),true,'Invalid SVG stays in the editor');
+    assert(await evaluate("document.querySelector('.tex-err').textContent"));
+  }
+  await evaluate(`(()=>{const t=document.querySelector('[aria-label="SVG source"]');t.value=${JSON.stringify(graph.replace('Example graph','Corrected graph'))};t.dispatchEvent(new Event('input'))})()`);
+  await click('.tex-panel .primary');
+  await until("!document.querySelector('.tex-panel')");
+  await shortcut('z',{ctrlKey:true});
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  assert.match(await evaluate("readRecord('pages','graph-page').then(p=>p.els[0].src)"),/Example graph/);
+  await shortcut('y',{ctrlKey:true});
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  await send('Page.reload');
+  await until("document.querySelector('.math-graphic')?.complete");
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  const savedGraphic=await evaluate("readRecord('pages','graph-page').then(p=>p.els[0])");
+  assert.match(savedGraphic.src,/Corrected graph/);
+  assert.deepEqual(savedGraphic.handwriting.ink,originalGraphInk);
+  // Inspect the actual page raster produced for PDF export, including the SVG pixels.
+  await evaluate(`(()=>{
+    const original=HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob=function(...args){
+      if(this.width===1785&&this.height===2526){
+        window.graphPdfPixel=Array.from(this.getContext('2d').getImageData(${Math.round((savedGraphic.x+192)*3)},${Math.round((savedGraphic.y+144)*3)},1,1).data);
+      }
+      return original.apply(this,args);
+    };
+    HTMLAnchorElement.prototype.click=function(){if(this.download&&this.href.startsWith('blob:'))window.graphDownload={name:this.download,body:fetch(this.href).then(r=>r.blob()).then(async b=>b.type==='image/svg+xml'?await b.text():btoa(String.fromCharCode(...new Uint8Array(await b.arrayBuffer()))))}};
+  })()`);
+  await click('[aria-label="Export"]');
+  await evaluate("[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Export as PDF').click()");
+  await until('!!window.graphPdfPixel');
+  const pixel=await evaluate('graphPdfPixel');
+  assert(pixel[0]>240&&pixel[1]<10&&pixel[2]<10&&pixel[3]>240,'The graph is present in the exported PDF raster');
+  await until('!!window.graphDownload');
+  assert.equal((await PDFDocument.load(Buffer.from(await evaluate('graphDownload.body'),'base64'))).getPageCount(),1);
+  await mouseGesture(await pagePoint(savedGraphic.x+192,savedGraphic.y+144));
+  await click('[aria-label="Edit selected object"]');
+  await evaluate("[...document.querySelectorAll('.tex-panel button')].find(b=>b.textContent==='Save SVG').click()");
+  assert.equal(await evaluate('graphDownload.name'),'opplinotes-graphic.svg');
+  assert.match(await evaluate('graphDownload.body'),/Corrected graph/);
+  const graphicShot=await send('Page.captureScreenshot',{format:'png'});
+  await writeFile('/tmp/opplinotes-graphic.png',Buffer.from(graphicShot.data,'base64'));
+  await evaluate("[...document.querySelectorAll('.tex-panel button')].find(b=>b.textContent==='Restore handwriting').click()");
+  await evaluate("window.dispatchEvent(new Event('pagehide'))");
+  const graphRestored=await evaluate("readRecord('pages','graph-page').then(p=>p.els)");
+  assert.deepEqual(graphRestored.map(e=>({...e,id:'graph-ink'})),originalGraphInk);
+  console.log('PASS: optional prompts, cancel, SVG graphs, source editing/download, active-content rejection, undo/redo, offline reload, PDF pixels and original handwriting restoration.');
 
   assert.deepEqual(exceptions, [], 'No uncaught exceptions while restoring positions');
   console.log('PASS: invalid saved positions fall back safely without blocking the PDF.');

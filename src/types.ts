@@ -9,7 +9,7 @@ export type ShapeKind = 'line' | 'arrow' | 'rect' | 'ellipse';
 export interface Shape { t: 'h'; id: string; k: ShapeKind; c: string; s: number; x1: number; y1: number; x2: number; y2: number }
 /** Text box. `$...$` inside the text is rendered as inline LaTeX. w/h are measured at render time. */
 export interface TextEl { t: 't'; id: string; x: number; y: number; c: string; fs: number; text: string; w?: number; h?: number; handwriting?: HandwritingSource }
-/** Display-style LaTeX block. */
+/** Display-style LaTeX block, or a standalone SVG graph/diagram in src. */
 export interface TexEl { t: 'x'; id: string; x: number; y: number; c: string; fs: number; src: string; w?: number; h?: number; handwriting?: HandwritingSource }
 /** Plain arrays keep the original ink lossless through JSON sync and backup files. */
 export interface HandwritingSource { x: number; y: number; fs: number; ink: (Shape | (Omit<Stroke, 'p'> & { p: number[] }))[] }

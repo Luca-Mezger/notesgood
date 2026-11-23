@@ -1,5 +1,6 @@
 // KaTeX rendering helpers.
 import katex from 'katex';
+import { graphicHtml, graphicSource, isGraphic } from './graphic';
 
 const cache = new Map<string, string>();
 
@@ -7,7 +8,10 @@ export function texHtml(src: string, display: boolean): string {
   const key = (display ? 'D' : 'I') + src;
   let html = cache.get(key);
   if (html == null) {
-    html = katex.renderToString(src, { displayMode: display, throwOnError: false, strict: 'ignore', output: 'html' });
+    if (display && isGraphic(src)) {
+      try { html = graphicHtml(src); }
+      catch { html = '<span class="katex-error">Invalid SVG graphic. Edit its source to fix it.</span>'; }
+    } else html = katex.renderToString(src, { displayMode: display, throwOnError: false, strict: 'ignore', output: 'html' });
     if (cache.size > 500) cache.clear();
     cache.set(key, html);
   }
@@ -16,7 +20,11 @@ export function texHtml(src: string, display: boolean): string {
 
 /** Returns an error message if the source does not parse, otherwise null. */
 export function texError(src: string): string | null {
-  try { katex.renderToString(src, { throwOnError: true, strict: 'ignore' }); return null; }
+  try {
+    if (isGraphic(src)) graphicSource(src);
+    else katex.renderToString(src, { throwOnError: true, strict: 'ignore' });
+    return null;
+  }
   catch (e: any) { return String(e?.message ?? e).replace(/^KaTeX parse error: /, ''); }
 }
 

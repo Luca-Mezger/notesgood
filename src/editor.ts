@@ -1,6 +1,7 @@
 // The notebook editor: page layout, zoom/pan, stylus input, tools, undo, autosave.
 import { db } from './db';
 import { richHtml, SNIPPETS, texError, texHtml } from './latex';
+import { graphicSource, isGraphic } from './graphic';
 import { closeDocs, clearTextLines, pdfTextLines, renderPdfPage, type RenderJob, type TextLine } from './pdf';
 import {
   axisSnap, cacheImage, cloneEl, drawEls, drawImages, drawInk, drawPaper, drawShape, drawStroke, elBBox, elInPoly, eraseFromStroke, hitEl, makeStroke,
@@ -733,7 +734,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   function closeTex() { texPanel?.remove(); texPanel = null; editing = null; }
   function editTex(pv: PV, existing: TexEl | null, x: number, y: number) {
     closeTex();
-    const ta = h('textarea', { class: 'field tex-src', rows: 3, placeholder: 'e.g.  \\int_0^1 x^2\\,dx = \\frac{1}{3}', spellcheck: false, autocapitalize: 'off', autocomplete: 'off', value: existing?.src ?? '' });
+    const graphic = !!existing && isGraphic(existing.src);
+    const ta = h('textarea', { class: 'field tex-src', rows: graphic ? 7 : 3, 'aria-label': graphic ? 'SVG source' : 'LaTeX source', placeholder: 'e.g.  \\int_0^1 x^2\\,dx = \\frac{1}{3}', spellcheck: false, autocapitalize: 'off', autocomplete: 'off', value: existing?.src ?? '' });
     const preview = h('div', { class: 'tex-preview' });
     const err = h('div', { class: 'tex-err' });
     const update = () => {
@@ -750,6 +752,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     };
     const commit = () => {
       const src = ta.value.trim();
+      if (isGraphic(src) && texError(src)) { err.textContent = texError(src); return; }
       const all = pv.page.els;
       if (existing) {
         const i = all.indexOf(existing);
@@ -779,13 +782,17 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); commit(); }
     });
     texPanel = h('div', { class: 'tex-panel' },
-      h('div', { class: 'tex-head' }, h('strong', null, existing ? 'Edit LaTeX' : 'Insert LaTeX'),
+      h('div', { class: 'tex-head' }, h('strong', null, graphic ? 'Edit graphic' : existing ? 'Edit LaTeX' : 'Insert LaTeX'),
         h('span', { class: 'muted' }, 'Ctrl+Enter to insert'), iconBtn('close', 'Cancel', closeTex)),
       preview, err, ta,
-      h('div', { class: 'snips' }, ...SNIPPETS.map(([label, s, back]) =>
+      !graphic && h('div', { class: 'snips' }, ...SNIPPETS.map(([label, s, back]) =>
         h('button', { type: 'button', class: 'snip', title: s, onpointerdown: (e: Event) => e.preventDefault(), onclick: () => insert(s, back) }, label))),
       h('div', { class: 'modal-actions' },
         existing?.handwriting ? h('button', { class: 'btn', type: 'button', onclick: () => { closeTex(); restoreHandwriting(pv, [existing]); } }, 'Restore handwriting') : null,
+        graphic ? h('button', { class: 'btn', type: 'button', onclick: () => {
+          try { download(new Blob([graphicSource(ta.value).src], { type: 'image/svg+xml' }), 'opplinotes-graphic.svg'); }
+          catch (e: any) { err.textContent = e.message; }
+        } }, 'Save SVG') : null,
         h('button', { class: 'btn', type: 'button', onclick: closeTex }, 'Cancel'),
         h('button', { class: 'btn primary', type: 'button', onclick: commit }, existing ? 'Update' : 'Insert')));
     stage.append(texPanel);
@@ -1387,20 +1394,37 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     setSel({ pv, els: restored });
     toast('Handwriting restored.');
   }
-  async function convertSel(kind: 'latex' | 'text') {
-    if (!sel) return;
+  let conversionBusy = false;
+  async function promptConversion() {
+    if (!sel || conversionBusy) return;
+    if (!recogReady()) { toast('Add your API key first: Settings → Handwriting recognition.'); settingsPopover(); return; }
+    const selection = sel;
+    const prompt = h('textarea', { class: 'field', rows: 3, maxLength: 4000, 'aria-label': 'Conversion prompt', placeholder: 'Optional: e.g. Plot this function from −3 to 3 and label the axes.' });
+    const accepted = await modal({ title: 'Handwriting to LaTeX', ok: 'Generate', body: h('div', { class: 'form' },
+      h('label', null, 'Instructions (optional)', prompt),
+      h('small', { class: 'hint' }, 'Leave empty to transcribe. Ask for a graph or diagram to create an editable SVG graphic.')) });
+    if (accepted && sel === selection) await convertSel('latex', prompt.value);
+  }
+  async function convertSel(kind: 'latex' | 'text', instructions = '') {
+    if (!sel || conversionBusy) return;
     const { pv, els } = sel;
     const ink = els.filter((e) => e.t === 's' || e.t === 'h');
     if (!ink.length) { toast('Select some handwriting first.'); return; }
     if (!recogReady()) { toast('Add your API key first: Settings → Handwriting recognition.'); settingsPopover(); return; }
+    conversionBusy = true;
     try {
-      toast(kind === 'latex' ? 'Reading the maths…' : 'Reading the handwriting…', true);
+      toast(instructions.trim() ? 'Generating…' : kind === 'latex' ? 'Reading the maths…' : 'Reading the handwriting…', true);
       const { png } = inkToPng(ink);
-      const out = await recogInk(png, kind);
+      let out = await recogInk(png, kind, instructions);
       if (closed || !pages.includes(pv.page) || !sel || sel.pv !== pv || !ink.every(e => pv.page.els.includes(e) && sel!.els.includes(e))) return;
+      const graphic = kind === 'latex' && isGraphic(out);
+      if (graphic) out = graphicSource(out).src;
+      else if (kind === 'latex' && texError(out)) throw Error('The generated formula could not be rendered. Try a simpler prompt, or ask for a graph as SVG.');
       const bb = unionBBox(ink)!;
       const lines = kind === 'latex' ? (out.match(/\\\\/g)?.length ?? 0) + 1 : out.split('\n').length;
-      const fs = Math.max(9, Math.min(36, ((bb[3] - bb[1]) / lines) * (kind === 'latex' ? 0.55 : 0.7)));
+      const size = graphic ? graphicSource(out) : null;
+      const fs = size ? Math.max(1, Math.min(16, (pageW(pv.page, nb) - bb[0] - 6) / 24,
+        (pageH(pv.page) - bb[1] - 6) / (24 * size.height / size.width))) : Math.max(9, Math.min(36, ((bb[3] - bb[1]) / lines) * (kind === 'latex' ? 0.55 : 0.7)));
       const el: TexEl | TextEl = kind === 'latex'
         ? { t: 'x', id: uid(), x: bb[0], y: bb[1], c: ts.tex.c, fs, src: out }
         : { t: 't', id: uid(), x: bb[0], y: bb[1], c: ts.text.c, fs, text: out };
@@ -1412,11 +1436,11 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       refreshPage(pv);
       pushOp({ page: pv.page, removed, added: [[pv.page.els.length - 1, el]] });
       setSel({ pv, els: [el] });
-      toast(kind === 'latex' ? 'Converted to LaTeX. Tap it with the Σ tool to edit the source.' : 'Converted to text.');
+      toast(graphic ? 'Graphic created. Use Edit to change or save its SVG source.' : kind === 'latex' ? 'Converted to LaTeX. Tap it with the Σ tool to edit the source.' : 'Converted to text.');
     } catch (e: any) {
       console.error(e);
       toast('Recognition failed: ' + (e?.message ?? e));
-    }
+    } finally { conversionBusy = false; }
   }
 
   function constrain(x1: number, y1: number, x2: number, y2: number, k: ShapeKind): [number, number] {
@@ -2030,7 +2054,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         h('button', { class: 'btn small', type: 'button', disabled: !sel, title: 'Delete', onclick: deleteSel }, icon('trash', 16), 'Delete'),
         sel && sel.els.some((e) => e.t === 'i') ? h('button', { class: 'btn small', type: 'button', onclick: () => setLock(true) }, icon('lock', 16), 'Lock picture') : null,
         !sel && pvs[curIdx]?.page.els.some(locked) ? h('button', { class: 'btn small', type: 'button', onclick: () => unlockAll(pvs[curIdx]) }, icon('unlock', 16), 'Unlock pictures on this page') : null,
-        sel && sel.els.some((e) => e.t === 's' || e.t === 'h') ? h('button', { class: 'btn small', type: 'button', title: 'Handwritten maths → rendered LaTeX', onclick: () => convertSel('latex') }, icon('tex', 16), 'To LaTeX') : null,
+        sel && sel.els.some((e) => e.t === 's' || e.t === 'h') ? h('button', { class: 'btn small', type: 'button', title: 'Convert handwriting, optionally with instructions for formulas or graphics', onclick: promptConversion }, icon('tex', 16), 'To LaTeX') : null,
         sel && sel.els.some((e) => e.t === 's' || e.t === 'h') ? h('button', { class: 'btn small', type: 'button', title: 'Handwriting → typed text', onclick: () => convertSel('text') }, icon('text', 16), 'To text') : null,
         sel && sel.els.some(e => (e.t === 'x' || e.t === 't') && e.handwriting) ? h('button', { class: 'btn small', type: 'button', onclick: () => { if (sel) restoreHandwriting(sel.pv, sel.els); } }, icon('undo', 16), 'Restore handwriting') : null,
         (() => { const cb = h('input', { type: 'checkbox', checked: ts.snapGrid, onchange: () => { ts.snapGrid = cb.checked; saveSettings(); } }); return h('label', { class: 'check' }, cb, 'Snap to grid'); })(),

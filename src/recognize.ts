@@ -74,10 +74,21 @@ const PROMPTS = {
     'Reply with the transcription only, no quotes, no explanation. Write any mathematics inline as $...$ LaTeX.',
 };
 
+const GRAPHIC_PROMPT = 'If the user asks for a graph, plot, diagram or drawing, return a complete standalone SVG instead of LaTeX. ' +
+  'Use xmlns="http://www.w3.org/2000/svg" and a viewBox, with readable labels, axes and requested ranges. ' +
+  'Calculate plotted curve coordinates accurately; draw curves using SVG paths or polylines. ' +
+  'Use only svg, g, path, rect, circle, ellipse, line, polyline, polygon, text, tspan, defs, marker, clipPath, linearGradient, radialGradient, stop, title and desc elements. ' +
+  'Use presentation attributes, plain text labels and explicit colours. No CSS/style attributes or elements, scripts, links, foreignObject, external resources, animation, HTML, Markdown or code fences. ' +
+  'Otherwise return only KaTeX-compatible LaTeX, without delimiters. TikZ and pgfplots are not supported; use SVG for graphics.';
+
 /** Asks the model for the LaTeX source (or text) of the handwriting in the PNG. */
-export async function recognize(png: string, kind: 'latex' | 'text'): Promise<string> {
+export async function recognize(png: string, kind: 'latex' | 'text', instructions = ''): Promise<string> {
   const cfg = recogConfig();
   if (!cfg.key) throw new Error('Add your API key under Settings → Handwriting recognition first');
+  instructions = instructions.trim();
+  if (instructions.length > 4000) throw new Error('Keep the prompt under 4000 characters.');
+  const prompt = instructions ? 'Use the selected handwriting as context and follow these user instructions:\n' + instructions + '\n\n' +
+    (kind === 'latex' ? GRAPHIC_PROMPT : PROMPTS.text) : PROMPTS[kind];
   const openai = cfg.provider === 'openai';
   const res = await fetch(openai ? 'https://api.openai.com/v1/responses' : 'https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -96,14 +107,14 @@ export async function recognize(png: string, kind: 'latex' | 'text'): Promise<st
       store: false,
       input: [{ role: 'user', content: [
         { type: 'input_image', image_url: `data:image/png;base64,${png}`, detail: 'high' },
-        { type: 'input_text', text: PROMPTS[kind] },
+        { type: 'input_text', text: prompt },
       ] }],
     } : {
       model: cfg.model,
-      max_tokens: 1200,
+      max_tokens: instructions ? 4096 : 1200,
       messages: [{ role: 'user', content: [
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data: png } },
-        { type: 'text', text: PROMPTS[kind] },
+        { type: 'text', text: prompt },
       ] }],
     }),
   });
@@ -116,14 +127,14 @@ export async function recognize(png: string, kind: 'latex' | 'text'): Promise<st
   const data = await res.json();
   if (data.error) throw new Error(data.error.message ?? 'Recognition failed');
   if ((openai && data.status === 'incomplete') || (!openai && data.stop_reason === 'max_tokens')) {
-    throw new Error('The transcription was cut off. Select a smaller area and try again.');
+    throw new Error('The result was cut off. Try a simpler prompt or select a smaller area.');
   }
   const content = openai
     ? (data.output ?? []).filter((item: any) => item.type === 'message').flatMap((item: any) => item.content ?? [])
     : data.content ?? [];
   if (content.some((c: any) => c.type === 'refusal')) throw new Error('The model could not transcribe this selection');
   let out = content.filter((c: any) => c.type === (openai ? 'output_text' : 'text')).map((c: any) => c.text).join('\n').trim();
-  out = out.replace(/^```(?:latex|tex)?\s*/i, '').replace(/\s*```$/, '').trim();
+  out = out.replace(/^```(?:latex|tex|svg|xml)?\s*/i, '').replace(/\s*```$/, '').trim();
   if (kind === 'latex') out = out.replace(/^\\\[\s*|\s*\\\]$/g, '').replace(/^\$\$?\s*|\s*\$\$?$/g, '').trim();
   if (!out) throw new Error('The model returned nothing');
   return out;
