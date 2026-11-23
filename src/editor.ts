@@ -12,7 +12,7 @@ import { confirmDlg, download, h, icon, iconBtn, menu, modal, popover, toast } f
 import { sync, syncEnabled } from './sync';
 import { inkToPng, recogReady, recognize as recogInk, RECOG_MODELS, recogConfig, saveRecogConfig, type RecogProvider } from './recognize';
 import { applyTheme, themeSetting, setThemeSetting } from './theme';
-import { InkSelectionPreview } from './selection-preview';
+import { SelectionPreview } from './selection-preview';
 
 export interface EditorHandle { close(): Promise<void> }
 
@@ -111,7 +111,7 @@ type Action =
   | { k: 'lasso'; id: number; pv: PV; pts: number[] }
   | { k: 'xform'; id: number; pv: PV; mode: 'move' | 'scale' | 'rotate'; x0: number; y0: number; origs: El[]; ox: number; oy: number; d0: number; moved: boolean;
       /** Set once the selection has been dragged onto another page: where it came from. */
-      src?: { pv: PV; removed: [number, El][] }; preview?: InkSelectionPreview }
+      src?: { pv: PV; removed: [number, El][] }; preview?: SelectionPreview }
   | { k: 'pan'; id: number; x: number; y: number };
 
 export async function openEditor(root: HTMLElement, nbId: string, onExit: () => void): Promise<EditorHandle> {
@@ -328,11 +328,12 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     c.clearRect(0, 0, pv.ink.width, pv.ink.height);
     c.setTransform(pv.scale, 0, 0, pv.scale, 0, 0);
     const preview = act?.k === 'xform' && act.pv === pv ? act.preview : null;
-    drawInk(c, preview ? pv.page.els.filter(e => !preview.ids.has(e.id)) : pv.page.els);
+    const visible = preview ? pv.page.els.filter(e => !preview.ids.has(e.id)) : pv.page.els;
+    drawInk(c, visible);
     const pc = pv.pics.getContext('2d')!;
     pc.setTransform(1, 0, 0, 1, 0, 0);
     pc.clearRect(0, 0, pv.pics.width, pv.pics.height);
-    if (pv.page.els.some((e) => e.t === 'i')) { const s = pv.pics.width / pageW(pv.page, nb); pc.setTransform(s, 0, 0, s, 0, 0); drawImages(pc, pv.page.els); }
+    if (visible.some((e) => e.t === 'i')) { const s = pv.pics.width / pageW(pv.page, nb); pc.setTransform(s, 0, 0, s, 0, 0); drawImages(pc, visible); }
   }
 
   function renderBg(pv: PV, s: number) {
@@ -1016,7 +1017,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         setSel(null);
         act = { k: 'lasso', id, pv, pts: [x, y] };
       }
-      if (act?.k === 'xform') startInkPreview(act);
+      if (act?.k === 'xform') startSelectionPreview(act);
     }
   }
 
@@ -1206,15 +1207,15 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
 
   const ev_isPen = (e: PointerEvent) => e.pointerType !== 'touch';
 
-  function startInkPreview(a: Extract<Action, { k: 'xform' }>) {
-    if (!sel || !a.origs.every(e => e.t === 's' || e.t === 'h')) return;
-    a.preview = new InkSelectionPreview(a.pv.el, a.origs, zoom, a.pv.scale || zoom * dpr, MAX_PX);
+  function startSelectionPreview(a: Extract<Action, { k: 'xform' }>) {
+    if (!sel || !a.origs.every(e => e.t === 's' || e.t === 'h' || e.t === 'i')) return;
+    a.preview = new SelectionPreview(a.pv.el, a.origs, zoom, a.pv.scale || zoom * dpr, MAX_PX, a.pv.page.els);
     redrawInk(a.pv);
     // Keep the handles above the temporary canvas.
     a.pv.el.append(selBox);
   }
 
-  function finishInkPreview(a: Extract<Action, { k: 'xform' }>, commit: boolean) {
+  function finishSelectionPreview(a: Extract<Action, { k: 'xform' }>, commit: boolean) {
     const p = a.preview;
     if (!p) return;
     if (commit && sel) for (let i = 0; i < sel.els.length; i++) xformEl(a.origs[i], sel.els[i], p.dx, p.dy, p.k, a.ox, a.oy, p.rot);
@@ -1237,7 +1238,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   function moveSelToPage(a: Extract<Action, { k: 'xform' }>, to: PV) {
     if (!sel) return;
     const hadPreview = !!a.preview;
-    finishInkPreview(a, true);
+    finishSelectionPreview(a, true);
     const from = a.pv, els = sel.els;
     const fr = from.el.getBoundingClientRect(), tr = to.el.getBoundingClientRect();
     const ox = (fr.left - tr.left) / zoom, oy = (fr.top - tr.top) / zoom;
@@ -1251,7 +1252,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     if (to.built) for (const el of els) if (el.t === 't' || el.t === 'x') makeNode(to, el);
     a.pv = to;
     sel = { pv: to, els };
-    if (hadPreview) startInkPreview(a);
+    if (hadPreview) startSelectionPreview(a);
     redrawInk(from);
     if (!a.preview) redrawInk(to);
     updateSelBox();
@@ -1541,7 +1542,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       else setSel({ pv: a.pv, els: picked });
     } else if (a.k === 'xform') {
       const hadPreview = !!a.preview;
-      finishInkPreview(a, a.moved);
+      finishSelectionPreview(a, a.moved);
       if (!a.moved || !sel) { if (hadPreview) redrawInk(a.pv); return; }
       redrawInk(a.pv);
       measure(a.pv);
@@ -1635,7 +1636,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     if (a.k === 'erase') { a.pv.page.els = a.orig; redrawInk(a.pv); }
     else if (a.k === 'ruler' && ruler) { Object.assign(ruler, a.o); updateRuler(); }
     else if (a.k === 'xform' && sel) {
-      finishInkPreview(a, false);
+      finishSelectionPreview(a, false);
       scrollV = 0; lastXform = null;
       if (a.src && a.src.pv !== a.pv) moveSelToPage(a, a.src.pv);
       for (let i = 0; i < sel.els.length; i++) xformEl(a.origs[i], sel.els[i], 0, 0);
@@ -1916,7 +1917,10 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     e.preventDefault();
     imgs.forEach((f, i) => addImage(f, e.clientX + i * 20, e.clientY + i * 20));
   }
-  const offImage = onImageReady(() => { for (const pv of pvs) if (pv.visible && pv.page.els.some((e) => e.t === 'i')) redrawInk(pv); });
+  const offImage = onImageReady((blob) => {
+    if (act?.k === 'xform') act.preview?.refreshImages(blob);
+    for (const pv of pvs) if (pv.visible && pv.page.els.some((e) => e.t === 'i')) redrawInk(pv);
+  });
 
   // ---------- toolbar ----------
   function setTool(t: Tool) {
