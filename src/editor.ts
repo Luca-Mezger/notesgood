@@ -1733,8 +1733,8 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         const pv = pvOf.get(current);
         if (!closed && pv) addSpaceBelow(pv);
       } }] : []),
-      { label: 'Blank page before', icon: 'up', action: () => addPage(current, 0) },
-      { label: 'Blank page after', icon: 'down', action: () => addPage(current, 1) },
+      { label: 'New page before', icon: 'up', action: () => addPage(current, 0) },
+      { label: 'New page after', icon: 'down', action: () => addPage(current, 1) },
     ]);
   }
   async function addPage(current: Page, offset: 0 | 1) {
@@ -1742,13 +1742,14 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     if (!pages.includes(current)) return;
     editing?.finish();
     // Blank paper stores its chosen width directly, so the PDF margin is applied only once.
-    const page: Page = { id: uid(), nb: nb.id, w: current.w, h: current.h, bg: { k: 'paper', tpl: 'blank', color: current.bg.k === 'paper' ? current.bg.color : nb.paper }, els: [] };
+    const page: Page = { id: uid(), nb: nb.id, w: current.w, h: current.h,
+      bg: current.bg.k === 'paper' ? { ...current.bg } : { k: 'paper', tpl: nb.marginTpl, color: nb.paper }, els: [] };
     addingPage = true;
     try {
       const fullWidth = pageW(current, nb);
       if (Math.abs(fullWidth - current.w) > 0.01) {
         const match = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Match adjacent page width' });
-        const accepted = await modal({ title: 'New blank page', ok: 'Add page', body:
+        const accepted = await modal({ title: 'New page', ok: 'Add page', body:
           h('label', { class: 'check block' }, match, h('span', null, offset ? 'Same width as page above, including writing space' : 'Same width as selected page, including writing space')) });
         if (!accepted) return;
         if (match.checked) page.w = fullWidth;

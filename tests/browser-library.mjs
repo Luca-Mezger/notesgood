@@ -541,14 +541,14 @@ try {
   const pageOrder = originalPages.map(p => p.id);
   const newPages = [];
   await click('[aria-label="Pages"]');
-  const insertBlank = async (index, side, button = '.toolbar [aria-label="Add page or writing space"]', { matchWidth = false, expectedWidth = 595, expectWidthChoice } = {}) => {
+  const insertBlank = async (index, side, button = '.toolbar [aria-label="Add page or writing space"]', { matchWidth = false, expectedWidth = 595, expectedTpl = 'blank', expectWidthChoice } = {}) => {
     await click(`.thumb[data-i="${index}"]`);
     await until(`document.querySelector('.thumb.current')?.dataset.i==='${index}'`);
     await click(button);
     // Even if the viewport moves with the menu open, insert beside the chosen page.
     await evaluate("document.querySelector('.viewport').scrollTop+=500");
     await delay(50);
-    await evaluate(`[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Blank page ${side}').click()`);
+    await evaluate(`[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='New page ${side}').click()`);
     const hasWidthChoice=await evaluate("!!document.querySelector('[aria-label=\"Match adjacent page width\"]')");
     if (expectWidthChoice!==undefined) assert.equal(hasWidthChoice,expectWidthChoice);
     if (hasWidthChoice) {
@@ -564,7 +564,7 @@ try {
     pageOrder.splice(at, 0, id);
     assert.deepEqual(nb.pages, pageOrder);
     const page = await evaluate(`readRecord('pages',${JSON.stringify(id)})`);
-    assert.deepEqual(page.bg, { k: 'paper', tpl: 'blank', color: nb.paper });
+    assert.deepEqual(page.bg, { k: 'paper', tpl: expectedTpl, color: nb.paper });
     assert.deepEqual(page.els, []);
     assert.equal(page.w, expectedWidth, 'Blank pages retain the chosen width');
     assert.equal(page.h, 842);
@@ -577,17 +577,18 @@ try {
   await insertBlank(0, 'before');
   const middleId = await insertBlank(4, 'after', '.thumb-actions [aria-label="Add page or writing space"]');
   await insertBlank(pageOrder.length - 1, 'after');
-  const setMargin = async value => {
+  const setMargin = async (value, template) => {
     await click('[aria-label="Writing space beside PDF pages"]');
     await evaluate(`(()=>{const s=document.querySelector('[aria-label="Writing space on the right"]');s.value=${value};s.dispatchEvent(new Event('input'))})()`);
+    if (template) await evaluate(`(()=>{const s=document.querySelector('.popover select');s.value=${JSON.stringify(template)};s.dispatchEvent(new Event('change'))})()`);
     await shortcut('Escape');
     await click('.zoom');
   };
-  await setMargin(50);
+  await setMargin(50,'dots');
   const pdfIndex=pageOrder.indexOf(originalPages[0].id);
   await click(`.thumb[data-i="${pdfIndex}"]`);
   await click('.toolbar [aria-label="Add page or writing space"]');
-  await evaluate("[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Blank page after').click()");
+  await evaluate("[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='New page after').click()");
   await until("!!document.querySelector('[aria-label=\"Match adjacent page width\"]')");
   const sizeBeforeWidthDialog=await evaluate('({width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio})');
   await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});
@@ -598,18 +599,21 @@ try {
   await evaluate("[...document.querySelectorAll('.modal-actions button')].find(b=>b.textContent==='Cancel').click()");
   assert.equal(await evaluate("document.querySelectorAll('.page').length"),pageOrder.length,'Cancel must not insert a page');
   assert.deepEqual(await evaluate(`readRecord('notebooks',${JSON.stringify(pdfId)}).then(nb=>nb.pages)`),pageOrder);
-  const wideId=await insertBlank(pdfIndex,'after',undefined,{matchWidth:true,expectedWidth:892.5,expectWidthChoice:true});
+  const wideId=await insertBlank(pdfIndex,'after',undefined,{matchWidth:true,expectedWidth:892.5,expectedTpl:'dots',expectWidthChoice:true});
   const wideIndex=pageOrder.indexOf(wideId);
   const widths=await evaluate(`(()=>{const pages=document.querySelectorAll('.page');return [pages[${wideIndex-1}].getBoundingClientRect().width,pages[${wideIndex}].getBoundingClientRect().width]})()`);
   assert(Math.abs(widths[0]-widths[1])<1,'The inserted page must visually line up with the PDF including its writing margin');
-  await insertBlank(wideIndex,'after',undefined,{expectedWidth:892.5,expectWidthChoice:false});
-  await insertBlank(pdfIndex,'after','.thumb-actions [aria-label="Add page or writing space"]',{expectWidthChoice:true});
+  await setMargin(50,'grid');
+  await insertBlank(wideIndex,'after',undefined,{expectedWidth:892.5,expectedTpl:'dots',expectWidthChoice:false});
+  await insertBlank(pdfIndex,'after','.thumb-actions [aria-label="Add page or writing space"]',{expectedTpl:'grid',expectWidthChoice:true});
+  await setMargin(50,'lined');
+  await insertBlank(pdfIndex,'before',undefined,{expectedTpl:'lined',expectWidthChoice:true});
   await setMargin(0);
   assert.equal(await evaluate(`readRecord('pages',${JSON.stringify(wideId)}).then(p=>p.w)`),892.5,'A later margin change must not resize blank pages');
   const afterInsert = await evaluate(`(async()=>Promise.all(${JSON.stringify(originalPages.map(p=>p.id))}.map(id=>readRecord('pages',id))))()`);
   assert.deepEqual(afterInsert, originalPages, 'Inserting pages must preserve original PDF references and existing ink exactly');
   assert.equal(await evaluate(`(async()=>{const b=await readRecord('blobs',${JSON.stringify(originalPages[0].bg.blob)});const a=new Uint8Array(await b.arrayBuffer());return btoa(String.fromCharCode(...a))})()`), encoded, 'The original PDF bytes stay untouched');
-  console.log('PASS: blank pages can match the PDF plus writing margin or its original width; cancellation, repeated additions, existing content and sync markers are preserved.');
+  console.log('PASS: new pages inherit dots, grid, lines or blank paper and the chosen width; cancellation, repeated additions, existing content and sync markers are preserved.');
 
   await click(`.thumb[data-i="${pageOrder.indexOf(middleId)}"]`);
   await click('.zoom');
@@ -725,7 +729,7 @@ try {
   await mouseGesture(await formulaPoint());
   assert.equal(await evaluate("!!document.querySelector('[aria-label=\"Edit selected object\"]')"),true);
   await click('.toolbar [aria-label="Add page or writing space"]');
-  await evaluate("[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Blank page after').click()");
+  await evaluate("[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='New page after').click()");
   await until("document.querySelectorAll('.page').length===2");
   assert.equal(await evaluate("!!document.querySelector('[aria-label=\"Edit selected object\"]')"),false,'Rebuilding pages clears mouse selection controls');
   assert.equal(await evaluate("!!document.querySelector('.optbar [aria-label=\"Thickness\"]')"),true,'The pen controls return after mouse selection is cleared');
