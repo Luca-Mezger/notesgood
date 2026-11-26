@@ -1739,21 +1739,31 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
   async function addPage(current: Page, offset: 0 | 1) {
     if (addingPage || closed) return;
-    const at = pages.indexOf(current);
-    if (at < 0) return;
+    if (!pages.includes(current)) return;
     editing?.finish();
-    // Match the actual page, without copying a PDF's extra writing margin or ruling.
+    // Blank paper stores its chosen width directly, so the PDF margin is applied only once.
     const page: Page = { id: uid(), nb: nb.id, w: current.w, h: current.h, bg: { k: 'paper', tpl: 'blank', color: current.bg.k === 'paper' ? current.bg.color : nb.paper }, els: [] };
-    const i = at + offset;
     addingPage = true;
-    pages.splice(i, 0, page);
-    nb.pages = pages.map((p) => p.id);
-    nb.updated = Date.now();
     try {
+      const fullWidth = pageW(current, nb);
+      if (Math.abs(fullWidth - current.w) > 0.01) {
+        const match = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Match adjacent page width' });
+        const accepted = await modal({ title: 'New blank page', ok: 'Add page', body:
+          h('label', { class: 'check block' }, match, h('span', null, offset ? 'Same width as page above, including writing space' : 'Same width as selected page, including writing space')) });
+        if (!accepted) return;
+        if (match.checked) page.w = fullWidth;
+      }
+      const at = pages.indexOf(current);
+      if (closed || at < 0) return;
+      const i = at + offset;
+      pages.splice(i, 0, page);
+      nb.pages = pages.map((p) => p.id);
+      nb.updated = Date.now();
       await db.insertPage(nb, page);
       if (!closed) { buildPages(); scrollToPage(i); }
     } catch (e) {
-      pages.splice(pages.indexOf(page), 1);
+      const i = pages.indexOf(page);
+      if (i >= 0) pages.splice(i, 1);
       nb.pages = pages.map((p) => p.id);
       console.error(e);
       toast('Could not add a page. Your device may be out of storage.');

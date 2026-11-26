@@ -541,7 +541,7 @@ try {
   const pageOrder = originalPages.map(p => p.id);
   const newPages = [];
   await click('[aria-label="Pages"]');
-  const insertBlank = async (index, side, button = '.toolbar [aria-label="Add page or writing space"]') => {
+  const insertBlank = async (index, side, button = '.toolbar [aria-label="Add page or writing space"]', { matchWidth = false, expectedWidth = 595, expectWidthChoice } = {}) => {
     await click(`.thumb[data-i="${index}"]`);
     await until(`document.querySelector('.thumb.current')?.dataset.i==='${index}'`);
     await click(button);
@@ -549,6 +549,13 @@ try {
     await evaluate("document.querySelector('.viewport').scrollTop+=500");
     await delay(50);
     await evaluate(`[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Blank page ${side}').click()`);
+    const hasWidthChoice=await evaluate("!!document.querySelector('[aria-label=\"Match adjacent page width\"]')");
+    if (expectWidthChoice!==undefined) assert.equal(hasWidthChoice,expectWidthChoice);
+    if (hasWidthChoice) {
+      assert.equal(await evaluate("document.querySelector('[aria-label=\"Match adjacent page width\"]').checked"),true,'Matching the visible page width is offered by default');
+      await evaluate(`document.querySelector('[aria-label="Match adjacent page width"]').checked=${matchWidth}`);
+      await click('.modal-actions .primary');
+    }
     const at = index + (side === 'after' ? 1 : 0);
     await until(`document.querySelectorAll('.page').length===${pageOrder.length + 1}`);
     const nb = await evaluate(`readRecord('notebooks',${JSON.stringify(pdfId)})`);
@@ -559,7 +566,7 @@ try {
     const page = await evaluate(`readRecord('pages',${JSON.stringify(id)})`);
     assert.deepEqual(page.bg, { k: 'paper', tpl: 'blank', color: nb.paper });
     assert.deepEqual(page.els, []);
-    assert.equal(page.w, 595, 'Blank pages match the PDF itself, without its extra writing margin');
+    assert.equal(page.w, expectedWidth, 'Blank pages retain the chosen width');
     assert.equal(page.h, 842);
     assert.equal(await evaluate(`readRecord('dirty',${JSON.stringify('p:' + id)}).then(Boolean)`), true);
     assert.equal(await evaluate(`readRecord('dirty',${JSON.stringify('n:' + pdfId)}).then(Boolean)`), true);
@@ -570,10 +577,39 @@ try {
   await insertBlank(0, 'before');
   const middleId = await insertBlank(4, 'after', '.thumb-actions [aria-label="Add page or writing space"]');
   await insertBlank(pageOrder.length - 1, 'after');
+  const setMargin = async value => {
+    await click('[aria-label="Writing space beside PDF pages"]');
+    await evaluate(`(()=>{const s=document.querySelector('[aria-label="Writing space on the right"]');s.value=${value};s.dispatchEvent(new Event('input'))})()`);
+    await shortcut('Escape');
+    await click('.zoom');
+  };
+  await setMargin(50);
+  const pdfIndex=pageOrder.indexOf(originalPages[0].id);
+  await click(`.thumb[data-i="${pdfIndex}"]`);
+  await click('.toolbar [aria-label="Add page or writing space"]');
+  await evaluate("[...document.querySelectorAll('.menu button')].find(b=>b.textContent==='Blank page after').click()");
+  await until("!!document.querySelector('[aria-label=\"Match adjacent page width\"]')");
+  const sizeBeforeWidthDialog=await evaluate('({width:innerWidth,height:innerHeight,deviceScaleFactor:devicePixelRatio})');
+  await send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false});
+  assert.equal(await evaluate("(()=>{const d=document.querySelector('.modal');return d.scrollWidth<=d.clientWidth})()"),true,'The width choice must fit a narrow phone screen');
+  await send('Emulation.setDeviceMetricsOverride',{...sizeBeforeWidthDialog,mobile:false});
+  const widthShot=await send('Page.captureScreenshot',{format:'png'});
+  await writeFile('/tmp/opplinotes-page-width.png',Buffer.from(widthShot.data,'base64'));
+  await evaluate("[...document.querySelectorAll('.modal-actions button')].find(b=>b.textContent==='Cancel').click()");
+  assert.equal(await evaluate("document.querySelectorAll('.page').length"),pageOrder.length,'Cancel must not insert a page');
+  assert.deepEqual(await evaluate(`readRecord('notebooks',${JSON.stringify(pdfId)}).then(nb=>nb.pages)`),pageOrder);
+  const wideId=await insertBlank(pdfIndex,'after',undefined,{matchWidth:true,expectedWidth:892.5,expectWidthChoice:true});
+  const wideIndex=pageOrder.indexOf(wideId);
+  const widths=await evaluate(`(()=>{const pages=document.querySelectorAll('.page');return [pages[${wideIndex-1}].getBoundingClientRect().width,pages[${wideIndex}].getBoundingClientRect().width]})()`);
+  assert(Math.abs(widths[0]-widths[1])<1,'The inserted page must visually line up with the PDF including its writing margin');
+  await insertBlank(wideIndex,'after',undefined,{expectedWidth:892.5,expectWidthChoice:false});
+  await insertBlank(pdfIndex,'after','.thumb-actions [aria-label="Add page or writing space"]',{expectWidthChoice:true});
+  await setMargin(0);
+  assert.equal(await evaluate(`readRecord('pages',${JSON.stringify(wideId)}).then(p=>p.w)`),892.5,'A later margin change must not resize blank pages');
   const afterInsert = await evaluate(`(async()=>Promise.all(${JSON.stringify(originalPages.map(p=>p.id))}.map(id=>readRecord('pages',id))))()`);
   assert.deepEqual(afterInsert, originalPages, 'Inserting pages must preserve original PDF references and existing ink exactly');
   assert.equal(await evaluate(`(async()=>{const b=await readRecord('blobs',${JSON.stringify(originalPages[0].bg.blob)});const a=new Uint8Array(await b.arrayBuffer());return btoa(String.fromCharCode(...a))})()`), encoded, 'The original PDF bytes stay untouched');
-  console.log('PASS: insert truly blank pages before the first, between PDF pages, and after the last; originals and sync markers are preserved.');
+  console.log('PASS: blank pages can match the PDF plus writing margin or its original width; cancellation, repeated additions, existing content and sync markers are preserved.');
 
   await click(`.thumb[data-i="${pageOrder.indexOf(middleId)}"]`);
   await click('.zoom');
@@ -606,7 +642,7 @@ try {
   await until('!!window.exportedPdf');
   const exported = await PDFDocument.load(Buffer.from(await evaluate('window.exportedPdf'), 'base64'));
   assert.equal(exported.getPageCount(), pageOrder.length, 'Export includes every inserted page');
-  for (const page of newPages) assert.deepEqual(exported.getPage(pageOrder.indexOf(page.id)).getSize(), { width: 595, height: 842 });
+  for (const page of newPages) assert.deepEqual(exported.getPage(pageOrder.indexOf(page.id)).getSize(), { width: page.w, height: page.h });
   console.log('PASS: PDF export includes all inserted pages at their intended positions and sizes.');
 
   await click('[aria-label="Back to library"]');

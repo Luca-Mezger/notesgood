@@ -173,7 +173,8 @@ from the hosted URL with Bubblewrap (Trusted Web Activity); see the deploy promp
 - **Pictures**: paste (Ctrl+V), drop, or insert from the toolbar; move and resize with the lasso.
   Lock a picture so it stays put; unlock from the lasso options. Ctrl+C / Ctrl+V also copies lasso selections between pages.
 - **Bulk import**: drop several PDFs, a folder, or a ZIP of PDFs (as GoodNotes exports them); folders are kept.
-- **Pages**: sidebar with thumbnails; add, reorder and delete pages.
+- **Pages**: sidebar with thumbnails; add, reorder and delete pages. When adding a blank page beside
+  a PDF with extra writing space, choose whether to match its full width or keep the original PDF width.
 - **Resume reading**: remembers the exact position and zoom for each notebook on this device, including after reopening the app.
 - **Settings**: pressure, hold-to-straighten and its delay, straight highlighter, finger drawing, text
   snapping, toolbar at the top or on the left side.
