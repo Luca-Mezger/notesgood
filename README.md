@@ -176,6 +176,13 @@ from the hosted URL with Bubblewrap (Trusted Web Activity); see the deploy promp
 - **Pages**: sidebar with thumbnails; add, reorder and delete pages. New pages inherit dotted, lined,
   grid or blank paper from the adjacent page (or the PDF's writing area). Beside a PDF with extra
   writing space, choose whether to match its full width or keep the original PDF width.
+- **Study analytics**: open **Analytics** in the library.
+  Track active study, pen contact, highlighting, erasing, editing, navigation and estimated reading time.
+  Idle time (30 seconds without input by default, configurable) and time in other windows are excluded
+  from active time. Explore date, folder, notebook and page reports, daily charts, weekday/hour heatmaps,
+  focus bursts, interruptions, session history and detailed gesture counters (input gestures, not a count of edits that survive undo). Export filtered CSV/JSON.
+  Tracking starts from installation, works offline and can be paused. Statistics use your existing private sync server and secret when Sync is configured,
+  including history collected before updating; notebook backups do not include them, and no handwriting, coordinates or typed text is recorded.
 - **Resume reading**: remembers the exact position and zoom for each notebook on this device, including after reopening the app.
 - **Settings**: pressure, hold-to-straighten and its delay, straight highlighter, finger drawing, text
   snapping, toolbar at the top or on the left side.

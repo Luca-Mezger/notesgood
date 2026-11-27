@@ -4,6 +4,8 @@
 // everything the server has seen since our last pull. Conflicts are last-write-wins per notebook / page.
 // Blobs (PDFs, pictures) are uploaded once and downloaded on demand before a page that needs them is stored.
 import { db } from './db';
+import { acknowledgeActivity, pendingActivity, writeActivity } from './activity-store';
+import { activityBucket, activityWireId } from './activity-wire';
 import type { El, Notebook, Page } from './types';
 
 export interface SyncConfig { url: string; key: string; rev: number; last: number; error?: string }
@@ -142,13 +144,29 @@ async function doSync(pushOnly: boolean): Promise<boolean> {
     }
     await flushBatch();
 
+    // Separate batches keep analytics independent of notebook/page uploads.
+    // Token acknowledgements cannot clear a bucket changed by the worker in flight.
+    let analyticsError = '';
+    try {
+      const waiting = await pendingActivity();
+      for (let i = 0; i < waiting.length; i += 100) {
+        const sent = waiting.slice(i, i + 100);
+        const items = await Promise.all(sent.map(async ({ row }) => ({ k: 'a', id: await activityWireId(row.id), updated: row.end, data: row })));
+        await call(cfg, { a: 'push' }, { method: 'POST', body: JSON.stringify({ items }), headers: { 'Content-Type': 'application/json' } });
+        await acknowledgeActivity(sent);
+      }
+    } catch (e: any) { analyticsError = 'Notes synced; analytics: ' + String(e?.message ?? e); }
+
     let changed = false;
     if (!pushOnly) {
       // ---- pull
       const res = await (await call(cfg, { a: 'pull', since: String(cfg.rev) })).json();
       const pending = new Set(await db.dirty()); // our unsynced edits win over what we pull
       for (const it of res.items as any[]) {
-        if (it.k === 'd') {
+        if (it.k === 'a') {
+          const bucket = activityBucket(it.data);
+          if (bucket && it.id === await activityWireId(bucket.id)) await writeActivity([bucket], false);
+        } else if (it.k === 'd') {
           if (await db.notebook(it.id)) { await db.deleteNotebook(it.id, true); changed = true; }
           else if (await db.page(it.id)) { await db.deletePage(it.id, true); changed = true; }
         } else if (it.k === 'n') {
@@ -171,7 +189,8 @@ async function doSync(pushOnly: boolean): Promise<boolean> {
     cfg.last = Date.now();
     delete cfg.error;
     localStorage.setItem(CFG, JSON.stringify(cfg));
-    setState('idle', 'Synced ' + ago(cfg.last));
+    if (analyticsError) { cfg.error = analyticsError; localStorage.setItem(CFG, JSON.stringify(cfg)); setState('error', analyticsError); }
+    else setState('idle', 'Synced ' + ago(cfg.last));
     return changed;
   } catch (e: any) {
     const msg = e?.name === 'TypeError' ? 'Could not reach the sync server' : String(e?.message ?? e);

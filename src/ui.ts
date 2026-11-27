@@ -21,6 +21,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(
 }
 
 const ICONS: Record<string, string> = {
+  analytics: 'M4 20h17M7 16v-5M12 16V4M17 16V8',
   back: 'M15 5l-7 7 7 7',
   undo: 'M9 6L4 11l5 5M4 11h10a5 5 0 0 1 0 10h-3',
   redo: 'M15 6l5 5-5 5M20 11H10a5 5 0 0 0 0 10h3',

@@ -1,0 +1,88 @@
+name: Build and deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: PHP_BIN="$(command -v php)" npm test
+      - run: php -l server/sync.php
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: |
+            dist
+            server/sync.php
+  pages:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+  hostinger:
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      FTP_HOST: ${{ secrets.FTP_HOST }}
+    steps:
+      - name: Hostinger credentials needed
+        if: env.FTP_HOST == ''
+        run: echo 'FTP secrets are not configured; Hostinger deployment was skipped.'
+      - uses: actions/download-artifact@v4
+        if: env.FTP_HOST != ''
+        with:
+          name: site
+          path: site
+      - name: Assemble app and protected sync endpoint
+        if: env.FTP_HOST != ''
+        env:
+          SYNC_KEY: ${{ secrets.SYNC_KEY }}
+        run: |
+          test "${#SYNC_KEY}" -ge 32
+          mkdir -p upload
+          cp -r site/dist/. upload/
+          cp site/server/sync.php upload/sync.php
+          printf '%s\n' "$SYNC_KEY" > upload/sync-key.txt
+          cat > upload/.htaccess <<'RULES'
+          <Files "sync-key.txt">
+            Require all denied
+          </Files>
+          RULES
+      - name: Deploy app folder, preserving private sync data
+        if: env.FTP_HOST != ''
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USER }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          local-dir: upload/
+          server-dir: ${{ secrets.FTP_DIR }}
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+            **/sync-data/**

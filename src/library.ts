@@ -98,6 +98,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
     h('label', { class: 'search' }, icon('search', 17),
       h('input', { type: 'search', placeholder: 'Search', 'aria-label': 'Search notes', oninput: (e: Event) => { query = (e.target as HTMLInputElement).value.toLowerCase(); renderGrid(); } })),
     sideNav,
+    h('button', { class: 'side-item', type: 'button', onclick: () => { location.hash = '#/analytics'; } }, icon('analytics', 18), h('span', null, 'Analytics')),
     h('div', { class: 'side-label' }, h('span', null, 'Folders'), iconBtn('plus', 'New folder', addFolder, 'side-add')),
     sideTree,
     h('div', { class: 'side-foot' }, syncBtn, libMore));

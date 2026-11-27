@@ -39,7 +39,7 @@ const build = Date.now().toString(36);
 
 const options = {
   define: { __BUILD__: JSON.stringify(build) },
-  entryPoints: [join(root, 'src/main.ts'), join(root, 'src/styles.css')],
+  entryPoints: [join(root, 'src/main.ts'), join(root, 'src/activity-worker.ts'), join(root, 'src/styles.css')],
   bundle: true,
   format: 'esm',
   splitting: true,

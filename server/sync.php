@@ -57,6 +57,32 @@ function withIndex(string $dir, callable $fn) {
   return $index;
 }
 
+
+/** Analytics records are cumulative. Replays and stale copies merge without adding time twice. */
+function analyticsData($raw, string $id): array {
+  if (!is_array($raw)) fail(400, 'Bad analytics');
+  $b = [];
+  foreach (['id','session','day','notebook','page','title','folder'] as $k) {
+    if (!isset($raw[$k]) || !is_string($raw[$k]) || strlen($raw[$k]) > (in_array($k, ['title','folder']) ? 16384 : 1024)) fail(400, 'Bad analytics');
+    $b[$k] = $raw[$k];
+  }
+  if ($b['id'] === '' || $b['session'] === '' || $b['page'] === '' || $b['notebook'] === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $b['day']) || $id !== 'a_' . hash('sha256', 'opplinotes.analytics.v1:' . $b['id'])) fail(400, 'Bad analytics');
+  foreach (['minute','start','end','pageNumber'] as $k) {
+    if (!isset($raw[$k]) || (!is_int($raw[$k]) && !is_float($raw[$k])) || !is_finite((float)$raw[$k]) || $raw[$k] < 0) fail(400, 'Bad analytics');
+    $b[$k] = $raw[$k];
+  }
+  if ($b['start'] > $b['end']) fail(400, 'Bad analytics');
+  foreach (['ms' => ['writing','highlighting','erasing','editing','navigation','reading','idle','away'], 'counts' => ['opens','pageViews','pageSwitches','awaySwitches','returns','focusStarts','strokes','highlights','erasures','selections','transforms','undos','redos','zooms','scrolls','characters']] as $group => $keys) {
+    $b[$group] = [];
+    foreach ($keys as $k) {
+      $v = $raw[$group][$k] ?? null;
+      if ((!is_int($v) && !is_float($v)) || !is_finite((float)$v) || $v < 0) fail(400, 'Bad analytics');
+      $b[$group][$k] = $v;
+    }
+  }
+  return $b;
+}
+
 if ($action === 'pull') {
   $since = (int) ($_GET['since'] ?? 0);
   $index = withIndex($dir, fn() => false);
@@ -85,15 +111,29 @@ if ($action === 'push') {
     foreach ($body['items'] as $it) {
       $id = $safeId((string) ($it['id'] ?? ''));
       $k = $it['k'] ?? '';
-      if (!in_array($k, ['n', 'p', 'd'], true)) fail(400, 'Bad item kind');
+      if (!in_array($k, ['n', 'p', 'd', 'a'], true)) fail(400, 'Bad item kind');
       $updated = (float) ($it['updated'] ?? 0);
       $cur = $index['items'][$id] ?? null;
       // Someone else saved a newer version of this item: keep theirs, the client gets it on pull.
-      if ($cur && $cur['updated'] > $updated) { $skipped[] = $id; continue; }
+      $data = $it['data'] ?? null;
+      if ($k === 'a') {
+        $data = analyticsData($data, $id);
+        if ($cur) {
+          if ($cur['k'] !== 'a') fail(400, 'Analytics id collision');
+          $old = analyticsData(json_decode((string)file_get_contents("$dir/items/$id.json"), true), $id);
+          $merged = $old['end'] > $data['end'] ? $old : $data;
+          $merged['start'] = min($old['start'], $data['start']);
+          $merged['end'] = max($old['end'], $data['end']);
+          foreach (['ms','counts'] as $group) foreach ($data[$group] as $field => $v) $merged[$group][$field] = max($old[$group][$field], $v);
+          $data = $merged;
+        }
+        $updated = max($updated, $cur['updated'] ?? 0, $data['end']);
+      }
+      if ($k !== 'a' && $cur && $cur['updated'] > $updated) { $skipped[] = $id; continue; }
       $index['rev']++;
       $index['items'][$id] = ['k' => $k, 'updated' => $updated, 'rev' => $index['rev']];
       if ($k === 'd') @unlink("$dir/items/$id.json");
-      else file_put_contents("$dir/items/$id.json", json_encode($it['data'] ?? null));
+      else file_put_contents("$dir/items/$id.json", json_encode($data));
     }
     return true;
   });

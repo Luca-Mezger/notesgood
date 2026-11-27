@@ -5,6 +5,7 @@
 //   PORT=8787 DATA_DIR=./sync-data                    optional
 //
 // Put it behind HTTPS (Caddy, nginx, or Hostinger's proxy) before using it from another device.
+import { analyticsData, mergeAnalytics } from './analytics.mjs';
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, createWriteStream, unlinkSync } from 'node:fs';
 import { dirname, extname, join, normalize } from 'node:path';
@@ -56,13 +57,23 @@ createServer(async (req, res) => {
         const skipped = [];
         for (const it of body.items ?? []) {
           const id = safeId(String(it.id ?? ''));
-          if (!id || !['n', 'p', 'd'].includes(it.k)) return json(res, 400, { error: 'Bad item' });
+          if (!id || !['n', 'p', 'd', 'a'].includes(it.k)) return json(res, 400, { error: 'Bad item' });
           const cur = index.items[id];
-          if (cur && cur.updated > Number(it.updated)) { skipped.push(id); continue; }
+          let data = it.data;
+          if (it.k === 'a') {
+            try {
+              data = analyticsData(data, id);
+              if (cur && cur.k !== 'a') return json(res, 400, { error: 'Analytics id collision' });
+              const old = cur ? analyticsData(JSON.parse(readFileSync(join(dataDir, 'items', id + '.json'), 'utf8')), id) : null;
+              data = mergeAnalytics(old, data);
+              it.updated = Math.max(Number(it.updated), cur?.updated ?? 0, data.end);
+            } catch { return json(res, 400, { error: 'Bad analytics' }); }
+          }
+          if (it.k !== 'a' && cur && cur.updated > Number(it.updated)) { skipped.push(id); continue; }
           index.rev++;
           index.items[id] = { k: it.k, updated: Number(it.updated), rev: index.rev };
           const f = join(dataDir, 'items', id + '.json');
-          if (it.k === 'd') { try { unlinkSync(f); } catch {} } else writeFileSync(f, JSON.stringify(it.data ?? null));
+          if (it.k === 'd') { try { unlinkSync(f); } catch {} } else writeFileSync(f, JSON.stringify(data ?? null));
         }
         saveIndex();
         return json(res, 200, { rev: index.rev, skipped });
