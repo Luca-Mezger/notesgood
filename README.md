@@ -126,6 +126,12 @@ Hostinger site, so `https://your-domain/notesgood/` is the installable app and
 `https://your-domain/notesgood/sync.php` is the sync server. Any device, Android included, can then
 install it from the browser's menu and use it offline.
 
+For this repository, the live Hostinger app is scoped to `notesgood/` (see `.hostinger/site.json`);
+the WordPress site at the domain root and the existing sync key/data must be preserved. Pages deploys
+automatically. Hostinger FTP deployment is optional and requires the FTP secrets above; without them,
+the job skips uploading. When the `SYNC_URL` repository variable is set, CI checks the existing private
+endpoint using `SYNC_KEY` without downloading or changing notes, including analytics support.
+
 ## Installing it as an app
 
 Use the [installation links at the top](#install-now) for Windows, Android, iOS/iPadOS, and Linux/NixOS.

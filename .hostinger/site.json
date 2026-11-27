@@ -1,0 +1,8 @@
+{
+  "domain": "lucamezger.com",
+  "username": "u343474752",
+  "type": "php",
+  "directory": "notesgood/",
+  "scope": "Deploy only the notesgood subdirectory; preserve the WordPress site at the domain root.",
+  "preserve": ["sync-key.txt", "sync-data/", ".htaccess"]
+}
