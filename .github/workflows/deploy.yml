@@ -18,8 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci --no-audit --no-fund
+      - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: PHP_BIN="$(command -v php)" npm test
       - run: php -l server/sync.php
