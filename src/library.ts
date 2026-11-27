@@ -1,8 +1,9 @@
 // Library: overview of all notebooks with folders, search, creation and PDF import.
 import { db } from './db';
+import { paperOptions } from './paper-options';
 import { PAPER_COLORS } from './render';
 import { makeCover } from './thumb';
-import { uid, type Notebook, type Page, type Tpl } from './types';
+import { uid, type Notebook, type Page, type Ruling, type Tpl } from './types';
 import { confirmDlg, download, fmtDate, h, icon, iconBtn, menu, modal, promptText, toast, type MenuItem } from './ui';
 import { markAllDirty, onSync, saveSyncConfig, sync, syncConfig, syncEnabled } from './sync';
 import { collectPdfSources, directoryFiles, importFolders, importTitle, pdfHash, type PdfSource } from './import';
@@ -608,6 +609,8 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
 
   async function newNotebook() {
     let tpl: Tpl = 'lined', paper = 'white', landscape = false;
+    let ruling: Ruling | undefined;
+    const pattern = paperOptions(() => tpl, () => ruling, value => { ruling = value; });
     const title = h('input', { type: 'text', class: 'field', value: 'Untitled notebook' });
     const paperSel = h('select', { class: 'field', onchange: () => (paper = paperSel.value) },
       h('option', { value: 'white' }, 'White'), h('option', { value: 'cream' }, 'Cream'));
@@ -615,7 +618,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       h('option', { value: 'p' }, 'Portrait'), h('option', { value: 'l' }, 'Landscape'));
     const body = h('div', { class: 'form' },
       h('label', null, 'Title', title),
-      h('label', null, 'Paper'), tplPicker(tpl, (t) => (tpl = t)),
+      h('label', null, 'Paper'), tplPicker(tpl, (t) => { tpl = t; pattern.refresh(); }), pattern.root,
       h('div', { class: 'row' }, h('label', null, 'Colour', paperSel), h('label', null, 'Orientation', orient)));
     if (!(await modal({ title: 'New notebook', body, ok: 'Create' }))) return;
 
@@ -625,7 +628,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       created: now, updated: now, pages: [], margin: 0, marginTpl: 'blank', tpl, paper: PAPER_COLORS[paper],
     };
     const [w, hh] = landscape ? [A4[1], A4[0]] : A4;
-    const page: Page = { id: uid(), nb: nb.id, w, h: hh, bg: { k: 'paper', tpl, color: nb.paper }, els: [] };
+    const page: Page = { id: uid(), nb: nb.id, w, h: hh, bg: { k: 'paper', tpl, color: nb.paper, ruling }, els: [] };
     nb.pages = [page.id];
     nb.cover = await makeCover(page, nb);
     await db.putPages([page]);
@@ -637,6 +640,9 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
   async function askMargin(heading: string, pw: number, ph: number, note: string, titleValue?: string) {
     let margin = Number(localStorage.getItem('margin.lastMargin') ?? 0.5);
     let marginTpl = (localStorage.getItem('margin.lastMarginTpl') as Tpl) ?? 'blank';
+    let marginRuling: Ruling | undefined;
+    try { marginRuling = JSON.parse(localStorage.getItem('margin.lastRuling') ?? 'null') ?? undefined; } catch {}
+    const pattern = paperOptions(() => marginTpl, () => marginRuling, value => { marginRuling = value; });
     const title = titleValue != null ? h('input', { type: 'text', class: 'field', value: titleValue }) : null;
     const prevPdf = h('div', { class: 'mp-pdf' }, h('span', null, 'PDF page'));
     const prevMargin = h('div', { class: 'mp-margin' }, h('span', null, 'Your notes'));
@@ -661,20 +667,21 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
       h('label', null, 'Writing space on the right'),
       preview, presets,
       h('div', { class: 'row slider-row' }, slider, out),
-      h('label', null, 'Paper in the writing space'), tplPicker(marginTpl, (t) => { marginTpl = t; update(); }),
+      h('label', null, 'Paper in the writing space'), tplPicker(marginTpl, (t) => { marginTpl = t; pattern.refresh(); update(); }), pattern.root,
       h('p', { class: 'hint' }, note));
     if (!(await modal({ title: heading, body, ok: 'Import' }))) return null;
     localStorage.setItem('margin.lastMargin', String(margin));
     localStorage.setItem('margin.lastMarginTpl', marginTpl);
-    return { margin, marginTpl, title: title?.value.trim() ?? '' };
+    localStorage.setItem('margin.lastRuling', JSON.stringify(marginRuling ?? null));
+    return { margin, marginTpl, marginRuling, title: title?.value.trim() ?? '' };
   }
 
-  async function createPdfNotebook(data: ArrayBuffer, sizes: [number, number][], title: string, folder: string, margin: number, marginTpl: Tpl, hash?: string, sourceId?: string): Promise<Notebook> {
+  async function createPdfNotebook(data: ArrayBuffer, sizes: [number, number][], title: string, folder: string, margin: number, marginTpl: Tpl, hash?: string, sourceId?: string, marginRuling?: Ruling): Promise<Notebook> {
     const now = Date.now();
     const blobId = uid();
     const nb: Notebook = {
       id: uid(), title: title || 'Imported PDF', folder, fav: false,
-      created: now, updated: now, pages: [], margin, marginTpl, tpl: 'blank', paper: PAPER_COLORS.white, importHash: hash, importSourceId: sourceId,
+      created: now, updated: now, pages: [], margin, marginTpl, marginRuling, tpl: 'blank', paper: PAPER_COLORS.white, importHash: hash, importSourceId: sourceId,
     };
     const pages: Page[] = sizes.map(([w, hh], i) => ({ id: uid(), nb: nb.id, w, h: hh, bg: { k: 'pdf', blob: blobId, n: i + 1 }, els: [] }));
     nb.pages = pages.map((p) => p.id);
@@ -710,7 +717,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
     if (!opt) return;
     const sourceFolder = importFolders([src])[0];
     const folder = destination === undefined ? sourceFolder || currentFolder() : joinFolder(destination, sourceFolder);
-    const nb = await createPdfNotebook(data, sizes, opt.title, folder, opt.margin, opt.marginTpl, hash);
+    const nb = await createPdfNotebook(data, sizes, opt.title, folder, opt.margin, opt.marginTpl, hash, undefined, opt.marginRuling);
     if (folder && !folders.includes(folder)) { folders.push(folder); await db.putMeta('folders', folders); }
     await src.onImported?.();
     openNotebook(nb.id);
@@ -722,7 +729,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
     const folderOf = (i: number) => destination === undefined ? folderNames[i] : joinFolder(destination, folderNames[i]);
     const nFolders = new Set(srcs.map((_, i) => folderOf(i)).filter(Boolean)).size;
 
-    const opt = quick ? { margin: goodnotesMargin(), marginTpl: 'lined' as Tpl } : await askMargin(`Import ${srcs.length} PDFs`, 595, 842,
+    const opt = quick ? { margin: goodnotesMargin(), marginTpl: 'lined' as Tpl, marginRuling: undefined as Ruling | undefined } : await askMargin(`Import ${srcs.length} PDFs`, 595, 842,
       `${srcs.length} notebooks will be created` + (nFolders ? `, sorted into ${nFolders} ${nFolders === 1 ? 'folder' : 'folders'} like in the export` : '') +
       '. The space applies to all of them and can be changed per notebook later.' +
       (skipped ? ` ${skipped} file${skipped === 1 ? '' : 's'} in GoodNotes' own format will be skipped; export those as PDF instead.` : ''));
@@ -754,7 +761,7 @@ export async function showLibrary(root: HTMLElement, openNotebook: (id: string) 
         const sizes = await pdfPageSizes(data);
         if (!sizes.length) throw new Error('PDF has no pages');
         const folder = folderOf(i) || (destination ?? currentFolder());
-        const nb = await createPdfNotebook(data, sizes, importTitle(srcs[i].name), folder, opt.margin, opt.marginTpl, hash, sourceId);
+        const nb = await createPdfNotebook(data, sizes, importTitle(srcs[i].name), folder, opt.margin, opt.marginTpl, hash, sourceId, opt.marginRuling);
         notebooks.push(nb);
         await srcs[i].onImported?.();
         if (folder && !folders.includes(folder)) { folders.push(folder); await db.putMeta('folders', folders); }

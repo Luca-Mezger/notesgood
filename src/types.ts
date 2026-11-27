@@ -1,12 +1,19 @@
 // Data model. All coordinates are in page points (1/72 inch), origin top-left of the page.
 
 export type Tpl = 'blank' | 'lined' | 'grid' | 'dots';
+export type LineStyle = 'solid' | 'dashed' | 'dotted';
+/** Ruling dimensions in page points; omitted values preserve the original templates. */
+export interface Ruling { spacing?: number; weight?: number }
+export function paperMetrics(tpl: Tpl, ruling?: Ruling) {
+  const safe = (v: number | undefined, fallback: number, min: number, max: number) => Number.isFinite(v) ? Math.max(min, Math.min(max, v!)) : fallback;
+  return { spacing: safe(ruling?.spacing, tpl === 'lined' ? 24 : 20, 3, 85), weight: safe(ruling?.weight, tpl === 'dots' ? 1.2 : tpl === 'lined' ? 0.6 : 0.45, 0.1, 6) };
+}
 export type BBox = [number, number, number, number]; // x0, y0, x1, y1
 
 /** Ink stroke. `p` holds x, y, pressure triplets. */
-export interface Stroke { t: 's'; id: string; k: 'pen' | 'hl'; c: string; s: number; p: Float32Array; bb: BBox }
+export interface Stroke { t: 's'; id: string; k: 'pen' | 'hl'; c: string; s: number; p: Float32Array; bb: BBox; style?: LineStyle }
 export type ShapeKind = 'line' | 'arrow' | 'rect' | 'ellipse';
-export interface Shape { t: 'h'; id: string; k: ShapeKind; c: string; s: number; x1: number; y1: number; x2: number; y2: number }
+export interface Shape { t: 'h'; id: string; k: ShapeKind; c: string; s: number; x1: number; y1: number; x2: number; y2: number; style?: LineStyle }
 /** Text box. `$...$` inside the text is rendered as inline LaTeX. w/h are measured at render time. */
 export interface TextEl { t: 't'; id: string; x: number; y: number; c: string; fs: number; text: string; w?: number; h?: number; handwriting?: HandwritingSource }
 /** Display-style LaTeX block, or a standalone SVG graph/diagram in src. */
@@ -14,11 +21,11 @@ export interface TexEl { t: 'x'; id: string; x: number; y: number; c: string; fs
 /** Plain arrays keep the original ink lossless through JSON sync and backup files. */
 export interface HandwritingSource { x: number; y: number; fs: number; ink: (Shape | (Omit<Stroke, 'p'> & { p: number[] }))[] }
 /** Pasted or inserted picture; the bitmap lives in the blob store. Always drawn beneath the ink. */
-export interface ImageEl { t: 'i'; id: string; x: number; y: number; w: number; h: number; blob: string; /** locked pictures cannot be selected or moved */ lock?: boolean }
+export interface ImageEl { t: 'i'; id: string; x: number; y: number; w: number; h: number; blob: string; /** locked pictures can show settings but cannot be moved */ lock?: boolean }
 export type El = Stroke | Shape | TextEl | TexEl | ImageEl;
 
 export type Bg =
-  | { k: 'paper'; tpl: Tpl; color: string }
+  | { k: 'paper'; tpl: Tpl; color: string; ruling?: Ruling }
   | { k: 'pdf'; blob: string; n: number }; // n = 1-based page number in the PDF
 
 /** For PDF pages, w/h is the size of the PDF page itself; the side margin is added on top (see pageW). */
@@ -39,6 +46,7 @@ export interface Notebook {
   /** Extra writing space right of each PDF page, as a fraction of the PDF page width. */
   margin: number;
   marginTpl: Tpl;
+  marginRuling?: Ruling;
   /** Template used for newly added pages. */
   tpl: Tpl;
   paper: string;

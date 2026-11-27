@@ -42,3 +42,14 @@ test('missing every stroke does not create an undo operation',()=>{
  const original=[line(0,0)];const session=new EraserSession(original);session.erase(100,100,5,true);
  assert.equal(session.changed,false);assert.deepEqual(session.operation(),{removed:[],added:[]});assert.deepEqual(session.elements(),original);
 });
+
+test('dotted and dashed styles survive partial erasing and shape rotation conversion',()=>{
+ for(const style of ['dotted','dashed']){
+  const stroke=makeStroke('pen','#123',2,[0,20,.5,100,20,.5],style);
+  const pieces=eraseFromStroke(stroke,50,20,5);
+  assert.equal(pieces.length,2);
+  assert(pieces.every(s=>s.style===style));
+  const shape={t:'h',id:'styled',k:'rect',c:'#123',s:2,x1:0,y1:0,x2:100,y2:100,style};
+  assert.equal(shapeToStroke(shape).style,style);
+ }
+});

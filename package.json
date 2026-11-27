@@ -15,6 +15,7 @@
     "test:transform": "node tests/browser-transform.mjs",
     "test:images": "node tests/browser-images.mjs",
     "test:analytics": "node tests/browser-analytics.mjs",
+    "test:options": "node tests/browser-options.mjs",
     "test:eraser": "node tests/browser-eraser.mjs"
   },
   "dependencies": {

@@ -1,6 +1,6 @@
 // Canvas drawing and geometry for ink strokes, shapes and paper templates.
-import type { BBox, El, Shape, Stroke, Tpl } from './types';
-import { uid } from './types';
+import type { BBox, El, LineStyle, Ruling, Shape, Stroke, Tpl } from './types';
+import { paperMetrics, uid } from './types';
 import { db } from './db';
 
 export const HL_ALPHA = 0.38;
@@ -16,16 +16,24 @@ export const penW = (s: number, p: number) => s * (0.4 + 1.2 * p);
  */
 export function drawStroke(
   ctx: CanvasRenderingContext2D, k: 'pen' | 'hl', color: string, s: number,
-  p: ArrayLike<number>, n: number, from = 0,
+  p: ArrayLike<number>, n: number, from = 0, style?: LineStyle,
 ) {
   if (n < 1) return;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = ctx.fillStyle = color;
 
-  if (k === 'hl') {
+  if (n === 1 && k === 'pen') {
+    ctx.beginPath();
+    ctx.arc(p[0], p[1], penW(s, p[2]) / 2, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+
+  if (k === 'hl' || (style && style !== 'solid')) {
+    ctx.setLineDash(lineDash(style, s));
     // Constant width, one path, so the translucent ink does not darken where segments overlap.
-    ctx.globalAlpha = HL_ALPHA;
+    ctx.globalAlpha = k === 'hl' ? HL_ALPHA : 1;
     ctx.lineWidth = s;
     ctx.beginPath();
     ctx.moveTo(p[0], p[1]);
@@ -37,15 +45,10 @@ export function drawStroke(
     ctx.lineTo(p[l], p[l + 1]);
     ctx.stroke();
     ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
     return;
   }
 
-  if (n === 1) {
-    ctx.beginPath();
-    ctx.arc(p[0], p[1], penW(s, p[2]) / 2, 0, Math.PI * 2);
-    ctx.fill();
-    return;
-  }
 
   let i = Math.max(1, from);
   let sx: number, sy: number;
@@ -89,13 +92,19 @@ function shapePath(ctx: CanvasRenderingContext2D, k: Shape['k'], x1: number, y1:
   }
 }
 
-export function drawShape(ctx: CanvasRenderingContext2D, k: Shape['k'], c: string, s: number, x1: number, y1: number, x2: number, y2: number) {
+export function lineDash(style: LineStyle | undefined, width: number): number[] {
+  return style === 'dashed' ? [width * 4, width * 3] : style === 'dotted' ? [0, width * 2.5] : [];
+}
+
+export function drawShape(ctx: CanvasRenderingContext2D, k: Shape['k'], c: string, s: number, x1: number, y1: number, x2: number, y2: number, style?: LineStyle) {
+  ctx.setLineDash(lineDash(style, s));
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = c;
   ctx.lineWidth = s;
   shapePath(ctx, k, x1, y1, x2, y2, s);
   ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 // ---------- images ----------
@@ -138,15 +147,15 @@ export function drawEls(ctx: CanvasRenderingContext2D, els: El[]) {
 /** Strokes and shapes only. */
 export function drawInk(ctx: CanvasRenderingContext2D, els: El[]) {
   for (const e of els) {
-    if (e.t === 's') drawStroke(ctx, e.k, e.c, e.s, e.p, e.p.length / 3);
-    else if (e.t === 'h') drawShape(ctx, e.k, e.c, e.s, e.x1, e.y1, e.x2, e.y2);
+    if (e.t === 's') drawStroke(ctx, e.k, e.c, e.s, e.p, e.p.length / 3, 0, e.style);
+    else if (e.t === 'h') drawShape(ctx, e.k, e.c, e.s, e.x1, e.y1, e.x2, e.y2, e.style);
   }
 }
 
 export const PAPER_COLORS: Record<string, string> = { white: '#ffffff', cream: '#fbf6e6' };
 
 /** Fills a paper area with its ruling. */
-export function drawPaper(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, tpl: Tpl, color: string) {
+export function drawPaper(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, tpl: Tpl, color: string, ruling?: Ruling) {
   ctx.fillStyle = color;
   ctx.fillRect(x0, y0, w, h);
   if (tpl === 'blank') return;
@@ -154,21 +163,20 @@ export function drawPaper(ctx: CanvasRenderingContext2D, x0: number, y0: number,
   ctx.beginPath();
   ctx.rect(x0, y0, w, h);
   ctx.clip();
+  const { spacing: g, weight } = paperMetrics(tpl, ruling);
   const rule = 'rgba(60, 90, 140, 0.22)';
   if (tpl === 'lined') {
-    ctx.strokeStyle = rule; ctx.lineWidth = 0.6; ctx.beginPath();
-    for (let y = y0 + 56; y < y0 + h - 16; y += 24) { ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); }
+    ctx.strokeStyle = rule; ctx.lineWidth = weight; ctx.beginPath();
+    for (let y = y0 + 56; y < y0 + h - 16; y += g) { ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); }
     ctx.stroke();
   } else if (tpl === 'grid') {
-    const g = 20;
-    ctx.strokeStyle = rule; ctx.lineWidth = 0.45; ctx.beginPath();
+    ctx.strokeStyle = rule; ctx.lineWidth = weight; ctx.beginPath();
     for (let x = x0 + g; x < x0 + w; x += g) { ctx.moveTo(x, y0); ctx.lineTo(x, y0 + h); }
     for (let y = y0 + g; y < y0 + h; y += g) { ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); }
     ctx.stroke();
   } else if (tpl === 'dots') {
-    const g = 20;
     ctx.fillStyle = 'rgba(60, 90, 140, 0.4)';
-    for (let x = x0 + g; x < x0 + w; x += g) for (let y = y0 + g; y < y0 + h; y += g) ctx.fillRect(x - 0.6, y - 0.6, 1.2, 1.2);
+    for (let x = x0 + g; x < x0 + w; x += g) for (let y = y0 + g; y < y0 + h; y += g) ctx.fillRect(x - weight / 2, y - weight / 2, weight, weight);
   }
   ctx.restore();
 }
@@ -328,9 +336,9 @@ export function unionBBox(els: Iterable<El>): BBox | null {
   return b;
 }
 
-export function makeStroke(k: 'pen' | 'hl', c: string, s: number, pts: number[]): Stroke {
+export function makeStroke(k: 'pen' | 'hl', c: string, s: number, pts: number[], style?: LineStyle): Stroke {
   const p = new Float32Array(pts);
-  return { t: 's', id: uid(), k, c, s, p, bb: strokeBBox(p, s) };
+  return { t: 's', id: uid(), k, c, s, p, bb: strokeBBox(p, s), ...(style && style !== 'solid' ? { style } : {}) };
 }
 
 // ---------- hold-to-snap shape recognition ----------
@@ -436,7 +444,7 @@ export function shapeToStroke(e: Shape): Stroke {
     pts.push(poly[i], poly[i + 1], 0.5);
     if (e.k === 'rect') pts.push(poly[i], poly[i + 1], 0.5); // doubled vertices keep the corners sharp
   }
-  const st = makeStroke('pen', e.c, e.s, pts);
+  const st = makeStroke('pen', e.c, e.s, pts, e.style);
   st.id = e.id;
   return st;
 }
@@ -484,5 +492,5 @@ export function eraseFromStroke(st: Stroke, x: number, y: number, r: number): St
   }
   keep.push(cur);
   if (!touched) return null;
-  return keep.filter((k) => k.length >= 6 || (k.length === 3 && st.k === 'pen' && false)).map((k) => makeStroke(st.k, st.c, st.s, k));
+  return keep.filter((k) => k.length >= 6 || (k.length === 3 && st.k === 'pen' && false)).map((k) => makeStroke(st.k, st.c, st.s, k, st.style));
 }

@@ -3,8 +3,8 @@
 import { db } from './db';
 import { richHtml, texHtml } from './latex';
 import { renderPdfPage } from './pdf';
-import { HL_ALPHA, penW, shapePoly } from './render';
-import { pageH, pageW, uid, type El, type Notebook, type Page, type Stroke, type Tpl } from './types';
+import { HL_ALPHA, lineDash, penW, shapePoly } from './render';
+import { pageH, pageW, paperMetrics, uid, type El, type Notebook, type Page, type Ruling, type Stroke, type Tpl } from './types';
 
 type Lib = typeof import('pdf-lib');
 type PDFPage = import('pdf-lib').PDFPage;
@@ -46,20 +46,21 @@ function hlPath(st: Stroke): string {
   return d + ` L${f(p[l])} ${f(p[l + 1])}`;
 }
 
-function rulingPath(x0: number, w: number, h: number, tpl: Tpl): { d: string; width: number; opacity: number } | null {
+function rulingPath(x0: number, w: number, h: number, tpl: Tpl, ruling?: Ruling): { d: string; width: number; opacity: number } | null {
   let d = '';
+  const { spacing: g, weight } = paperMetrics(tpl, ruling);
   if (tpl === 'lined') {
-    for (let y = 56; y < h - 16; y += 24) d += `M${f(x0)} ${y} L${f(x0 + w)} ${y} `;
-    return { d, width: 0.6, opacity: 0.22 };
+    for (let y = 56; y < h - 16; y += g) d += `M${f(x0)} ${f(y)} L${f(x0 + w)} ${f(y)} `;
+    return { d, width: weight, opacity: 0.22 };
   }
   if (tpl === 'grid') {
-    for (let x = x0 + 20; x < x0 + w; x += 20) d += `M${f(x)} 0 L${f(x)} ${f(h)} `;
-    for (let y = 20; y < h; y += 20) d += `M${f(x0)} ${y} L${f(x0 + w)} ${y} `;
-    return { d, width: 0.45, opacity: 0.22 };
+    for (let x = x0 + g; x < x0 + w; x += g) d += `M${f(x)} 0 L${f(x)} ${f(h)} `;
+    for (let y = g; y < h; y += g) d += `M${f(x0)} ${f(y)} L${f(x0 + w)} ${f(y)} `;
+    return { d, width: weight, opacity: 0.22 };
   }
   if (tpl === 'dots') {
-    for (let x = x0 + 20; x < x0 + w; x += 20) for (let y = 20; y < h; y += 20) d += `M${f(x)} ${y} L${f(x)} ${y} `;
-    return { d, width: 1.3, opacity: 0.4 };
+    for (let x = x0 + g; x < x0 + w; x += g) for (let y = g; y < h; y += g) d += `M${f(x)} ${f(y)} L${f(x)} ${f(y)} `;
+    return { d, width: weight, opacity: 0.4 };
   }
   return null;
 }
@@ -160,11 +161,11 @@ export async function exportPdf(nb: Notebook, pages: Page[], onProgress?: (done:
     // Background
     if (page.bg.k === 'paper') {
       out.drawRectangle({ x: 0, y: 0, width: w, height: h, color: hexRgb(L, page.bg.color) });
-      const r = rulingPath(0, w, h, page.bg.tpl);
+      const r = rulingPath(0, w, h, page.bg.tpl, page.bg.ruling);
       if (r) path(r.d, { borderColor: rule, borderWidth: r.width, borderOpacity: r.opacity, ...round });
     } else {
       if (h > page.h) {
-        const r = rulingPath(0, w, h, nb.marginTpl);
+        const r = rulingPath(0, w, h, nb.marginTpl, nb.marginRuling);
         if (r) path(r.d, { borderColor: rule, borderWidth: r.width, borderOpacity: r.opacity, ...round });
         out.drawRectangle({ x: 0, y: h - page.h, width: page.w, height: page.h, color: L.rgb(1, 1, 1) });
       }
@@ -192,7 +193,7 @@ export async function exportPdf(nb: Notebook, pages: Page[], onProgress?: (done:
         }
       }
       if (w > page.w) {
-        const r = rulingPath(page.w, w - page.w, h, nb.marginTpl);
+        const r = rulingPath(page.w, w - page.w, h, nb.marginTpl, nb.marginRuling);
         if (r) path(r.d, { borderColor: rule, borderWidth: r.width, borderOpacity: r.opacity, ...round });
         out.drawLine({ start: { x: page.w, y: 0 }, end: { x: page.w, y: h }, thickness: 0.6, color: L.rgb(0, 0, 0), opacity: 0.13 });
       }
@@ -218,6 +219,7 @@ export async function exportPdf(nb: Notebook, pages: Page[], onProgress?: (done:
       if (e.t === 's') {
         const color = hexRgb(L, e.c);
         if (e.k === 'hl') path(hlPath(e), { borderColor: color, borderWidth: e.s, borderOpacity: HL_ALPHA, ...round });
+        else if (e.style && e.style !== 'solid' && e.p.length > 3) path(hlPath(e), { borderColor: color, borderWidth: e.s, borderDashArray: lineDash(e.style, e.s), ...round });
         else if (e.p.length === 3) out.drawCircle({ x: e.p[0], y: h - e.p[1], size: penW(e.s, e.p[2]) / 2, color });
         else for (const b of penPaths(e)) path(b.d, { borderColor: color, borderWidth: b.w, ...round });
       } else if (e.t === 'h') {
@@ -230,7 +232,7 @@ export async function exportPdf(nb: Notebook, pages: Page[], onProgress?: (done:
           const a = Math.atan2(e.y2 - e.y1, e.x2 - e.x1), len = Math.max(8, e.s * 4.5);
           d += ` M${f(e.x2 - len * Math.cos(a - 0.45))} ${f(e.y2 - len * Math.sin(a - 0.45))} L${f(e.x2)} ${f(e.y2)} L${f(e.x2 - len * Math.cos(a + 0.45))} ${f(e.y2 - len * Math.sin(a + 0.45))}`;
         }
-        path(d, { borderColor: color, borderWidth: e.s, ...round });
+        path(d, { borderColor: color, borderWidth: e.s, borderDashArray: lineDash(e.style, e.s), ...round });
       }
     }
 

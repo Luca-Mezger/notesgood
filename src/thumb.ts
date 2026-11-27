@@ -12,9 +12,9 @@ export function paintBase(canvas: HTMLCanvasElement, page: Page, nb: Notebook, w
   const ctx = canvas.getContext('2d')!;
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
   const H = pageH(page);
-  if (page.bg.k === 'paper') drawPaper(ctx, 0, 0, w, H, page.bg.tpl, page.bg.color);
+  if (page.bg.k === 'paper') drawPaper(ctx, 0, 0, w, H, page.bg.tpl, page.bg.color, page.bg.ruling);
   else {
-    drawPaper(ctx, 0, 0, w, H, nb.marginTpl, PAPER_COLORS.white);
+    drawPaper(ctx, 0, 0, w, H, nb.marginTpl, PAPER_COLORS.white, nb.marginRuling);
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, page.w, page.h);
     if (w > page.w) { ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(page.w - 0.25, 0, 0.5, H); }

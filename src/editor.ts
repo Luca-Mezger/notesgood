@@ -8,13 +8,14 @@ import {
   onImageReady, PAPER_COLORS, polyStroke, recognize, shapeToStroke, unionBBox, xformEl, type Snap,
 } from './render';
 import { makeCover, renderThumb } from './thumb';
-import { pageH, pageW, uid, type EditorHistory, type El, type ImageEl, type Notebook, type Page, type SavedOp, type ShapeKind, type TexEl, type TextEl, type Tpl } from './types';
+import { pageH, pageW, uid, type EditorHistory, type El, type ImageEl, type LineStyle, type Notebook, type Page, type SavedOp, type ShapeKind, type TexEl, type TextEl, type Tpl } from './types';
 import { confirmDlg, download, h, icon, iconBtn, menu, modal, popover, toast } from './ui';
 import { sync, syncEnabled } from './sync';
 import { inkToPng, recogReady, recognize as recogInk, RECOG_MODELS, recogConfig, saveRecogConfig, type RecogProvider } from './recognize';
 import { applyTheme, themeSetting, setThemeSetting } from './theme';
 import { SelectionPreview } from './selection-preview';
 import { EraserSession } from './eraser';
+import { paperOptions } from './paper-options';
 
 export interface EditorHandle { close(): Promise<void> }
 
@@ -22,12 +23,12 @@ type Tool = 'pen' | 'hl' | 'eraser' | 'shape' | 'text' | 'tex' | 'select' | 'han
 
 interface Settings {
   tool: Tool;
-  pen: { c: string; s: number };
+  pen: { c: string; s: number; style?: LineStyle };
   hl: { c: string; s: number; mode?: 'mark' | 'under'; straight?: boolean };
   /** Underline: a thin, opaque, always-straight line. */
   ul: { c: string; s: number };
   eraser: { s: number; mode?: 'stroke' | 'partial' };
-  shape: { c: string; s: number; k: ShapeKind };
+  shape: { c: string; s: number; k: ShapeKind; style?: LineStyle };
   text: { c: string; fs: number };
   tex: { c: string; fs: number };
   /** Whether a finger draws (true) or only scrolls (false). Switches off automatically once a stylus is seen. */
@@ -106,7 +107,7 @@ interface Op { page: Page; removed: [number, El][]; added: [number, El][]; also?
 interface ReadingPosition { page: string; index: number; x: number; y: number; zoom: number }
 
 type Action =
-  | { k: 'draw'; id: number; pv: PV; tool: 'pen' | 'hl'; c: string; s: number; baseS: number; pts: number[]; drawn: number; lp: number; straight: boolean; snap: Snap | null; hx: number; hy: number; timer: number; ruler: boolean }
+  | { k: 'draw'; id: number; pv: PV; tool: 'pen' | 'hl'; c: string; s: number; baseS: number; style?: LineStyle; pts: number[]; drawn: number; lp: number; straight: boolean; snap: Snap | null; hx: number; hy: number; timer: number; ruler: boolean }
   | { k: 'erase'; id: number; pv: PV; session: EraserSession; lx: number; ly: number }
   | { k: 'ruler'; id: number; pv: PV; part: 'a' | 'b' | 'body'; sx: number; sy: number; o: { x1: number; y1: number; x2: number; y2: number } }
   | { k: 'shape'; id: number; pv: PV; x1: number; y1: number; x2: number; y2: number }
@@ -178,9 +179,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       iconBtn('trash', 'Delete page', () => deletePage())),
     thumbsList);
   const stage = h('div', { class: 'stage tray-open' }, viewport, live);
-  /** The options tray opens when you pick a tool, folds away when you write, and reopens when you tap the active tool. */
-  const setTray = (open: boolean) => stage.classList.toggle('tray-open', open);
-  viewport.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse' || e.button === 0) setTray(false); }, true);
+  // Tool settings remain visible while writing and when switching tools.
   const toolRow = h('div', { class: 'tools' });
   const optbar = h('div', { class: 'optbar' });
   const undoBtn = iconBtn('undo', 'Undo (Ctrl+Z)', () => doUndo());
@@ -348,9 +347,9 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       if (pv.bg.width !== cw || pv.bg.height !== ch) { pv.bg.width = cw; pv.bg.height = ch; }
       const c = pv.bg.getContext('2d')!;
       c.setTransform(s, 0, 0, s, 0, 0);
-      if (page.bg.k === 'paper') drawPaper(c, 0, 0, w, H, page.bg.tpl, page.bg.color);
+      if (page.bg.k === 'paper') drawPaper(c, 0, 0, w, H, page.bg.tpl, page.bg.color, page.bg.ruling);
       else {
-        drawPaper(c, 0, 0, w, H, nb.marginTpl, PAPER_COLORS.white);
+        drawPaper(c, 0, 0, w, H, nb.marginTpl, PAPER_COLORS.white, nb.marginRuling);
         c.fillStyle = '#fff';
         c.fillRect(0, 0, page.w, page.h);
         c.fillStyle = 'rgba(0,0,0,0.13)';
@@ -636,6 +635,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     const bb = act?.k === 'xform' && act.preview ? act.preview.bounds : sel && unionBBox(sel.els);
     if (!sel || !bb) { selBox.remove(); return; }
     if (selBox.parentElement !== sel.pv.el) sel.pv.el.append(selBox);
+    selBox.classList.toggle('locked', sel.els.some(locked));
     const pad = 5;
     selBox.style.left = bb[0] * zoom - pad + 'px';
     selBox.style.top = bb[1] * zoom - pad + 'px';
@@ -807,6 +807,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   let penPointer: number | null = null;
   let pointerType = 'mouse';
   let pinch: { d: number; z: number; mx: number; my: number } | null = null;
+  let pictureTap: { id: number; pv: PV; el: ImageEl; x: number; y: number } | null = null;
   let touchPan = false, vx = 0, vy = 0, lastT = 0, inertia = 0;
 
   const pvFromEvent = (e: MouseEvent): PV | null => {
@@ -823,6 +824,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   const capture = (id: number) => { try { viewport.setPointerCapture(id); } catch { /* pointer already gone */ } };
 
   function resetTouchGesture() {
+    pictureTap = null;
     touches.clear();
     pinch = null;
     touchPan = false;
@@ -856,10 +858,22 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       // scroll the page or a second finger discard the unfinished stroke.
       if (penPointer !== null) return;
       if (touches.size === 1) {
+        const pv = pvFromEvent(e);
+        if (pv) {
+          measure(pv);
+          const [x, y] = toPage(pv, e.clientX, e.clientY);
+          const hit = [...pv.page.els].reverse().find((el): el is ImageEl => el.t === 'i' && !!el.lock && hitEl(el, x, y, 4 / zoom));
+          if (hit) {
+            pictureTap = { id: e.pointerId, pv, el: hit, x: e.clientX, y: e.clientY };
+            startTouchPan(e);
+            return;
+          }
+        }
         if (startRulerDrag(e)) return;
         const draws = ts.fingerDraw && ts.tool !== 'hand';
         if (draws) startAction(e); else startTouchPan(e);
       } else if (touches.size === 2) {
+        pictureTap = null;
         if (act) cancelAction();
         resumeTouchGesture(e.timeStamp);
       }
@@ -909,9 +923,10 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       (x >= bb[0] - pad && x <= bb[2] + pad && y >= bb[1] - pad && y <= bb[3] + pad) ||
       Math.hypot(x - bb[2] - pad, y - bb[3] - pad) < 16 / zoom ||
       Math.hypot(x - (bb[0] + bb[2]) / 2, y - (bb[1] - pad - 22 / zoom)) < 16 / zoom);
-    const hit = [...pv.page.els].reverse().find(el => !locked(el) && hitEl(el, x, y, 4 / zoom));
+    const hit = [...pv.page.els].reverse().find(el => hitEl(el, x, y, 4 / zoom));
     if (hit) {
       if (sel?.pv !== pv || !sel.els.includes(hit)) setSel({ pv, els: [hit] });
+      if (locked(hit)) { e.preventDefault(); return; }
     } else if (!inSelection) {
       setSel(null);
       if (ts.tool === 'text' || ts.tool === 'tex') {
@@ -994,11 +1009,11 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       const o = under ? ts.ul : ts[tool];
       const kind = under ? 'pen' : tool;
       const p = straight ? 0.5 : pressureOf(e);
-      const a: Action = { k: 'draw', id, pv, tool: kind, c: o.c, s: o.s, baseS: o.s, pts: [x, y, p], drawn: 1, lp: p, straight, snap: null, hx: e.clientX, hy: e.clientY, timer: 0, ruler: false };
+      const a: Action = { k: 'draw', id, pv, tool: kind, c: o.c, s: o.s, baseS: o.s, style: tool === 'pen' ? ts.pen.style : undefined, pts: [x, y, p], drawn: 1, lp: p, straight, snap: null, hx: e.clientX, hy: e.clientY, timer: 0, ruler: false };
       if (ruler && ruler.pv === pv && !straight && distToRuler(x, y) < 22 / zoom) { a.ruler = true; const q = onRuler(x, y); a.pts = [q[0], q[1], p]; }
       act = a;
       aimLive(pv);
-      drawStroke(lctx, kind, o.c, o.s, a.pts, 1);
+      drawStroke(lctx, kind, o.c, o.s, a.pts, 1, 0, a.style);
       armHold(a);
     } else if (tool === 'eraser') {
       act = { k: 'erase', id, pv, session: new EraserSession(pv.page.els), lx: x, ly: y };
@@ -1006,6 +1021,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     } else if (tool === 'shape') {
       act = { k: 'shape', id, pv, x1: x, y1: y, x2: x, y2: y };
     } else if (tool === 'select') {
+      if (sel?.els.some(locked)) setSel(null);
       measure(pv);
       const bb = sel && sel.pv === pv ? unionBBox(sel.els) : null;
       const pad = 6 / zoom;
@@ -1045,6 +1061,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       else if (penPointer === e.pointerId && !penContact(e)) { onUp(e); return; }
     }
     if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+      if (pictureTap && Math.hypot(e.clientX - pictureTap.x, e.clientY - pictureTap.y) > 8) pictureTap = null;
       const t = touches.get(e.pointerId)!;
       const dx = e.clientX - t.x, dy = e.clientY - t.y;
       t.x = e.clientX; t.y = e.clientY;
@@ -1133,12 +1150,12 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         pts.push(x, y, a.lp);
       }
       const n = pts.length / 3;
-      if (a.tool === 'hl') {
+      if (a.tool === 'hl' || (a.style && a.style !== 'solid')) {
         lctx.save();
         lctx.setTransform(1, 0, 0, 1, 0, 0);
         lctx.clearRect(0, 0, live.width, live.height);
         lctx.restore();
-        drawStroke(lctx, 'hl', a.c, a.s, pts, n);
+        drawStroke(lctx, a.tool, a.c, a.s, pts, n, 0, a.style);
       } else if (n > a.drawn) {
         drawStroke(lctx, 'pen', a.c, a.s, pts, n, a.drawn);
         a.drawn = n - 1;
@@ -1162,7 +1179,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       if (e.shiftKey) [a.x2, a.y2] = constrain(a.x1, a.y1, x, y, ts.shape.k);
       clearLive();
       aimLive(a.pv);
-      drawShape(lctx, ts.shape.k, ts.shape.c, ts.shape.s, a.x1, a.y1, a.x2, a.y2);
+      drawShape(lctx, ts.shape.k, ts.shape.c, ts.shape.s, a.x1, a.y1, a.x2, a.y2, ts.shape.style);
     } else if (a.k === 'lasso') {
       a.pts.push(x, y);
       clearLive();
@@ -1463,8 +1480,13 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
 
   function onUp(e: PointerEvent) {
+    const tap = pictureTap?.id === e.pointerId ? pictureTap : null;
+    if (tap) pictureTap = null;
     const penFinished = e.pointerType === 'pen' && penPointer === e.pointerId;
-    try { finishPointer(e); }
+    try {
+      finishPointer(e);
+      if (tap && e.type !== 'pointercancel' && penPointer === null && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) <= 8) setSel({ pv: tap.pv, els: [tap.el] });
+    }
     finally {
       if (penFinished) {
         penPointer = null;
@@ -1529,7 +1551,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     } else if (a.k === 'shape') {
       clearLive();
       if (Math.hypot(a.x2 - a.x1, a.y2 - a.y1) * zoom < 4) return;
-      const sh: El = { t: 'h', id: uid(), k: ts.shape.k, c: ts.shape.c, s: ts.shape.s, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 };
+      const sh: El = { t: 'h', id: uid(), k: ts.shape.k, c: ts.shape.c, s: ts.shape.s, style: ts.shape.style, x1: a.x1, y1: a.y1, x2: a.x2, y2: a.y2 };
       const els = a.pv.page.els;
       els.push(sh);
       redrawInk(a.pv);
@@ -1598,7 +1620,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     for (const e of els) if (e.t === 'i') e.lock = v;
     pushOp({ page: pv.page, removed, added: els.map((e) => [all.indexOf(e), e]) });
     setSel(v ? null : { pv, els });
-    toast(v ? 'Picture locked. Unlock it from the lasso tool’s options.' : 'Picture unlocked.');
+    toast(v ? 'Picture locked. Tap it with your mouse or finger to unlock.' : 'Picture unlocked.');
   }
   function unlockAll(pv: PV) {
     const els = pv.page.els.filter(locked), all = pv.page.els;
@@ -1612,10 +1634,10 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   /** The element a draw gesture produces: the raw stroke, or the clean shape it snapped to. */
   function drawnEl(a: Extract<Action, { k: 'draw' }>): El {
     const s = a.snap;
-    if (!s) return makeStroke(a.tool, a.c, a.s, a.pts);
-    if (s.k === 'poly') return polyStroke(a.c, a.s, s.v);
+    if (!s) return makeStroke(a.tool, a.c, a.s, a.pts, a.style);
+    if (s.k === 'poly') return { ...polyStroke(a.c, a.s, s.v), style: a.style };
     if (s.k === 'line' && a.tool === 'hl') return makeStroke('hl', a.c, a.s, [s.x1, s.y1, 0.5, s.x2, s.y2, 0.5]);
-    return { t: 'h', id: uid(), k: s.k, c: a.c, s: a.s, x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2 };
+    return { t: 'h', id: uid(), k: s.k, c: a.c, s: a.s, style: a.style, x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2 };
   }
 
   /** (Re)starts the hold timer: if the pen then rests in place, the stroke is replaced by a clean shape. */
@@ -1727,7 +1749,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     editing?.finish();
     // Blank paper stores its chosen width directly, so the PDF margin is applied only once.
     const page: Page = { id: uid(), nb: nb.id, w: current.w, h: current.h,
-      bg: current.bg.k === 'paper' ? { ...current.bg } : { k: 'paper', tpl: nb.marginTpl, color: nb.paper }, els: [] };
+      bg: current.bg.k === 'paper' ? { ...current.bg } : { k: 'paper', tpl: nb.marginTpl, color: nb.paper, ruling: nb.marginRuling }, els: [] };
     addingPage = true;
     try {
       const fullWidth = pageW(current, nb);
@@ -1791,18 +1813,29 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       touchNb();
     };
     const slider = h('input', { type: 'range', min: 0, max: 500, step: 5, value: Math.round(nb.margin * 100), 'aria-label': 'Writing space on the right', oninput: () => { nb.margin = Number(slider.value) / 100; apply(); } });
-    const tpl = h('select', { class: 'field', onchange: () => { nb.marginTpl = tpl.value as Tpl; for (const pv of pvs) pv.bgW = -1; apply(); } },
+    const ruling = paperOptions(() => nb.marginTpl, () => nb.marginRuling, value => { nb.marginRuling = value; for (const pv of pvs) pv.bgW = -1; apply(); });
+    const tpl = h('select', { class: 'field', onchange: () => { nb.marginTpl = tpl.value as Tpl; ruling.refresh(); for (const pv of pvs) pv.bgW = -1; apply(); } },
       ...(['blank', 'lined', 'grid', 'dots'] as Tpl[]).map((t) => h('option', { value: t, selected: t === nb.marginTpl }, t[0].toUpperCase() + t.slice(1))));
     out.textContent = nb.margin ? Math.round(nb.margin * 100) + '% of page width' : 'No extra space';
     popover(marginBtn, h('div', { class: 'form pop-form' },
       h('label', null, 'Writing space beside each PDF page'),
       h('div', { class: 'row slider-row' }, slider, out),
-      h('label', null, 'Paper', tpl),
+      h('label', null, 'Paper', tpl), ruling.root,
       h('button', { class: 'btn small', type: 'button', onclick: () => setZoom(fitZoom(false), 0, 0, true) }, 'Fit to width'),
       h('label', null, 'Space below this page'),
       h('div', { class: 'row' },
         h('button', { class: 'btn small', type: 'button', onclick: () => addSpaceBelow(pvs[curIdx]) }, 'Add half a page'),
         h('button', { class: 'btn small', type: 'button', onclick: () => trimPage(pvs[curIdx]) }, 'Remove empty space'))));
+  }
+
+  function pagePaperPopover() {
+    const pv = pvs[curIdx], bg = pv.page.bg;
+    if (bg.k !== 'paper') return;
+    const apply = () => { pv.bgW = -1; if (pv.visible) renderPV(pv); markDirty(pv.page); };
+    const pattern = paperOptions(() => bg.tpl, () => bg.ruling, value => { bg.ruling = value; apply(); });
+    const tpl = h('select', { class: 'field', 'aria-label': 'Page paper pattern', onchange: () => { bg.tpl = tpl.value as Tpl; pattern.refresh(); apply(); } },
+      ...(['blank', 'lined', 'grid', 'dots'] as Tpl[]).map(t => h('option', { value: t, selected: t === bg.tpl }, t[0].toUpperCase() + t.slice(1))));
+    popover(settingsBtn, h('div', { class: 'form pop-form' }, h('label', null, 'Paper for this page', tpl), pattern.root));
   }
 
   function settingsPopover() {
@@ -1813,6 +1846,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     const out = h('output', null, (ts.holdMs / 1000).toFixed(2) + ' s');
     const delay = h('input', { type: 'range', min: 250, max: 1000, step: 50, value: ts.holdMs, 'aria-label': 'Hold time', oninput: () => { ts.holdMs = Number(delay.value); out.textContent = (ts.holdMs / 1000).toFixed(2) + ' s'; saveSettings(); } });
     popover(settingsBtn, h('div', { class: 'form pop-form' },
+      pvs[curIdx]?.page.bg.k === 'paper' ? h('button', { class: 'btn small', type: 'button', onclick: pagePaperPopover }, 'Paper for this page') : null,
       toggle('Pressure sensitivity', 'Pen strokes get thicker when you press harder', () => ts.pressure, (v) => (ts.pressure = v)),
       toggle('Hold to straighten', 'Rest the pen at the end of a stroke to get a clean line, rectangle, ellipse or triangle', () => ts.holdSnap, (v) => (ts.holdSnap = v)),
       h('label', null, 'Hold time'),
@@ -1962,7 +1996,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
   function renderTools() {
     toolRow.replaceChildren(...TOOLS.map(([t, ic, label, key]) => {
-      const b = iconBtn(ic, `${label} (${key})`, () => { if (ts.tool === t && !sel) setTray(!stage.classList.contains('tray-open')); else { setTool(t); setTray(true); } }, 'tool' + (ts.tool === t ? ' active' : ''));
+      const b = iconBtn(ic, `${label} (${key})`, () => setTool(t), 'tool' + (ts.tool === t ? ' active' : ''));
       b.setAttribute('aria-pressed', String(ts.tool === t));
       // The pen and highlighter show their current colour as a small dot in the dock.
       const c = t === 'pen' ? ts.pen.c : t === 'hl' ? (ts.hl.mode === 'under' ? ts.ul.c : ts.hl.c) : '';
@@ -1986,7 +2020,6 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   }
   function renderOptbar() {
     renderCursor();
-    if (sel) setTray(true);
     const t = sel ? 'select' : ts.tool;
     const kids: (Node | null)[] = [];
     const colorTool = t === 'pen' || t === 'hl' || t === 'shape' || t === 'text' || t === 'tex' ? t : null;
@@ -2016,6 +2049,11 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
           h('span', { style: { width: 5 + i * 5 + 'px', height: 5 + i * 5 + 'px' } }))));
       kids.push(dots, slider);
     }
+    if (t === 'pen' || t === 'shape') {
+      kids.push(h('div', { class: 'seg tight line-styles', 'aria-label': 'Line style' }, ...(['solid', 'dashed', 'dotted'] as LineStyle[]).map(style =>
+        h('button', { type: 'button', title: style[0].toUpperCase() + style.slice(1), 'aria-label': style[0].toUpperCase() + style.slice(1) + ' line', 'aria-pressed': String((ts[t].style ?? 'solid') === style), class: (ts[t].style ?? 'solid') === style ? 'active' : '', onclick: () => { ts[t].style = style; saveSettings(); renderOptbar(); } },
+          h('span', { class: 'line-sample ' + style })) )));
+    }
     if (t === 'shape') {
       kids.push(h('div', { class: 'opt-group' }, ...(['line', 'arrow', 'rect', 'ellipse'] as ShapeKind[]).map((k) =>
         iconBtn(k, k[0].toUpperCase() + k.slice(1), () => { ts.shape.k = k; saveSettings(); renderOptbar(); }, 'tool' + (ts.shape.k === k ? ' active' : '')))));
@@ -2032,7 +2070,6 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       kids.push(h('label', { class: 'check' }, cb, 'Straight'));
     }
     if (t === 'hl' && under) kids.push(h('span', { class: 'hint' }, 'Drag along the text to underline it'));
-    if (t === 'pen' && ts.holdSnap) kids.push(h('span', { class: 'hint' }, 'Hold still at the end of a stroke for a clean line or shape'));
     if (t === 'eraser') {
       kids.unshift(h('div', { class: 'seg tight' }, ...([['stroke', 'Whole stroke'], ['partial', 'Partial']] as const).map(([m, label]) =>
         h('button', { type: 'button', class: (ts.eraser.mode ?? 'stroke') === m ? 'active' : '', onclick: () => { ts.eraser.mode = m; saveSettings(); renderOptbar(); } }, label))));
@@ -2047,13 +2084,13 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
         h('button', { class: 'btn small', type: 'button', disabled: !clipboard.length, title: 'Paste on the page you are viewing (Ctrl+V)', onclick: pasteClipboard }, icon('paste', 16), 'Paste'),
         h('button', { class: 'btn small', type: 'button', disabled: !sel, title: 'Duplicate (Ctrl+D)', onclick: duplicateSel }, icon('copy', 16), 'Duplicate'),
         h('button', { class: 'btn small', type: 'button', disabled: !sel, title: 'Delete', onclick: deleteSel }, icon('trash', 16), 'Delete'),
-        sel && sel.els.some((e) => e.t === 'i') ? h('button', { class: 'btn small', type: 'button', onclick: () => setLock(true) }, icon('lock', 16), 'Lock picture') : null,
+        sel && sel.els.some((e) => e.t === 'i') ? h('button', { class: 'btn small', type: 'button', 'aria-label': sel.els.some(locked) ? 'Unlock picture' : 'Lock picture', onclick: () => setLock(!sel!.els.some(locked)) }, icon(sel.els.some(locked) ? 'unlock' : 'lock', 16), sel.els.some(locked) ? 'Unlock picture' : 'Lock picture') : null,
         !sel && pvs[curIdx]?.page.els.some(locked) ? h('button', { class: 'btn small', type: 'button', onclick: () => unlockAll(pvs[curIdx]) }, icon('unlock', 16), 'Unlock pictures on this page') : null,
         sel && sel.els.some((e) => e.t === 's' || e.t === 'h') ? h('button', { class: 'btn small', type: 'button', title: 'Convert handwriting, optionally with instructions for formulas or graphics', onclick: promptConversion }, icon('tex', 16), 'To LaTeX') : null,
         sel && sel.els.some((e) => e.t === 's' || e.t === 'h') ? h('button', { class: 'btn small', type: 'button', title: 'Handwriting → typed text', onclick: () => convertSel('text') }, icon('text', 16), 'To text') : null,
         sel && sel.els.some(e => (e.t === 'x' || e.t === 't') && e.handwriting) ? h('button', { class: 'btn small', type: 'button', onclick: () => { if (sel) restoreHandwriting(sel.pv, sel.els); } }, icon('undo', 16), 'Restore handwriting') : null,
         (() => { const cb = h('input', { type: 'checkbox', checked: ts.snapGrid, onchange: () => { ts.snapGrid = cb.checked; saveSettings(); } }); return h('label', { class: 'check' }, cb, 'Snap to grid'); })(),
-        h('span', { class: 'hint' }, sel ? 'Drag to move, also onto another page · corner resizes · top handle rotates' : 'Circle items or tap one to select'));
+        h('span', { class: 'hint' }, sel?.els.some(locked) ? 'Picture locked' : sel ? 'Drag to move, also onto another page · corner resizes · top handle rotates' : 'Circle items or tap one to select'));
     }
     optbar.replaceChildren(...kids.filter((k): k is Node => !!k));
   }
