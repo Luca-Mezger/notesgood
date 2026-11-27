@@ -4,7 +4,7 @@ import { richHtml, SNIPPETS, texError, texHtml } from './latex';
 import { graphicSource, isGraphic } from './graphic';
 import { closeDocs, clearTextLines, pdfTextLines, renderPdfPage, type RenderJob, type TextLine } from './pdf';
 import {
-  axisSnap, cacheImage, cloneEl, drawEls, drawImages, drawInk, drawPaper, drawShape, drawStroke, elBBox, elInPoly, eraseFromStroke, hitEl, makeStroke,
+  axisSnap, cacheImage, cloneEl, drawEls, drawImages, drawInk, drawPaper, drawShape, drawStroke, elBBox, elInPoly, hitEl, makeStroke,
   onImageReady, PAPER_COLORS, polyStroke, recognize, shapeToStroke, unionBBox, xformEl, type Snap,
 } from './render';
 import { makeCover, renderThumb } from './thumb';
@@ -14,6 +14,7 @@ import { sync, syncEnabled } from './sync';
 import { inkToPng, recogReady, recognize as recogInk, RECOG_MODELS, recogConfig, saveRecogConfig, type RecogProvider } from './recognize';
 import { applyTheme, themeSetting, setThemeSetting } from './theme';
 import { SelectionPreview } from './selection-preview';
+import { EraserSession } from './eraser';
 
 export interface EditorHandle { close(): Promise<void> }
 
@@ -106,7 +107,7 @@ interface ReadingPosition { page: string; index: number; x: number; y: number; z
 
 type Action =
   | { k: 'draw'; id: number; pv: PV; tool: 'pen' | 'hl'; c: string; s: number; baseS: number; pts: number[]; drawn: number; lp: number; straight: boolean; snap: Snap | null; hx: number; hy: number; timer: number; ruler: boolean }
-  | { k: 'erase'; id: number; pv: PV; orig: El[]; removed: [number, El][]; added: El[]; dirty: boolean; lx: number; ly: number }
+  | { k: 'erase'; id: number; pv: PV; session: EraserSession; lx: number; ly: number }
   | { k: 'ruler'; id: number; pv: PV; part: 'a' | 'b' | 'body'; sx: number; sy: number; o: { x1: number; y1: number; x2: number; y2: number } }
   | { k: 'shape'; id: number; pv: PV; x1: number; y1: number; x2: number; y2: number }
   | { k: 'lasso'; id: number; pv: PV; pts: number[] }
@@ -1000,7 +1001,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       drawStroke(lctx, kind, o.c, o.s, a.pts, 1);
       armHold(a);
     } else if (tool === 'eraser') {
-      act = { k: 'erase', id, pv, orig: pv.page.els.slice(), removed: [], added: [], dirty: false, lx: x, ly: y };
+      act = { k: 'erase', id, pv, session: new EraserSession(pv.page.els), lx: x, ly: y };
       eraseAt(x, y);
     } else if (tool === 'shape') {
       act = { k: 'shape', id, pv, x1: x, y1: y, x2: x, y2: y };
@@ -1454,29 +1455,10 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
     const a = act;
     if (!a || a.k !== 'erase') return;
     const r = ts.eraser.s / 2 / zoom;
-    const els = a.pv.page.els;
-    const partial = ts.eraser.mode === 'partial';
-    const drop = (el: El) => { const j = a.added.indexOf(el); if (j >= 0) a.added.splice(j, 1); else a.removed.push([a.orig.indexOf(el), el]); };
-    for (let i = els.length - 1; i >= 0; i--) {
-      const el = els[i];
-      if (el.t !== 's' && el.t !== 'h') continue;
-      if (!hitEl(el, x, y, r)) continue;
-      if (partial) {
-        const st = el.t === 'h' ? shapeToStroke(el) : el;
-        const pieces = eraseFromStroke(st, x, y, r);
-        if (!pieces) continue;
-        drop(el);
-        els.splice(i, 1, ...pieces);
-        a.added.push(...pieces);
-      } else {
-        drop(el);
-        els.splice(i, 1);
-      }
-      a.dirty = true;
-    }
+    if (!a.session.erase(x, y, r, ts.eraser.mode === 'partial')) return;
     schedule(() => {
-      if (a.dirty) { a.dirty = false; redrawInk(a.pv); }
-      clearLive();
+      a.pv.page.els = a.session.elements();
+      a.session.paint(a.pv.ink, a.pv.scale);
     });
   }
 
@@ -1537,9 +1519,11 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
       maybeGrow(a.pv, elBBox(st)[3]);
     } else if (a.k === 'erase') {
       clearLive();
-      redrawInk(a.pv);
-      const all = a.pv.page.els;
-      if (a.removed.length || a.added.length) pushOp({ page: a.pv.page, removed: a.removed, added: a.added.map((el) => [all.indexOf(el), el]) });
+      if (a.session.changed) {
+        a.pv.page.els = a.session.elements();
+        a.session.paint(a.pv.ink, a.pv.scale);
+        pushOp({ page: a.pv.page, ...a.session.operation() });
+      }
     } else if (a.k === 'ruler') {
       return;
     } else if (a.k === 'shape') {
@@ -1657,7 +1641,7 @@ export async function openEditor(root: HTMLElement, nbId: string, onExit: () => 
   function abort(a: Action) {
     clearLive();
     if (a.k === 'draw') clearTimeout(a.timer);
-    if (a.k === 'erase') { a.pv.page.els = a.orig; redrawInk(a.pv); }
+    if (a.k === 'erase') { a.pv.page.els = a.session.original; a.session.restore(a.pv.ink, a.pv.scale); }
     else if (a.k === 'ruler' && ruler) { Object.assign(ruler, a.o); updateRuler(); }
     else if (a.k === 'xform' && sel) {
       finishSelectionPreview(a, false);

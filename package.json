@@ -14,7 +14,8 @@
     "test:library": "node tests/browser-library.mjs",
     "test:transform": "node tests/browser-transform.mjs",
     "test:images": "node tests/browser-images.mjs",
-    "test:analytics": "node tests/browser-analytics.mjs"
+    "test:analytics": "node tests/browser-analytics.mjs",
+    "test:eraser": "node tests/browser-eraser.mjs"
   },
   "dependencies": {
     "katex": "^0.16.47",
